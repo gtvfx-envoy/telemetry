@@ -1,0 +1,44 @@
+# Tempo configuration for the envoy telemetry bundle.
+#
+# Monolithic single-binary mode with persistent local storage, sized for
+# one (or a small number of) studio server(s) -- not a distributed
+# deployment. See ../../README.md for the horizontal-scaling upgrade path
+# (distributed Tempo, Mimir) if volume ever outgrows this.
+#
+# Retention (`compactor.compaction.block_retention` below) is normally
+# managed via `envoy telemetry configure --retention-days=N`
+# (telemetry-controller rewrites this field and reloads Tempo) rather than
+# hand-edited -- this file remains the durable source of truth either way.
+
+server:
+  http_listen_port: 3200
+  log_level: info
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    # 30 days by default (studio-configurable).
+    block_retention: 720h
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal
+
+# Upstream usage reporting disabled -- this bundle never phones home.
+usage_report:
+  reporting_enabled: false

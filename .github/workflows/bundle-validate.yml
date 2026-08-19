@@ -1,0 +1,91 @@
+name: Validate bundle configuration
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-configs:
+    name: Validate Compose / Collector / Tempo / Grafana / dashboard configs
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Validate docker-compose.yml syntax
+        working-directory: compose
+        run: docker compose config --quiet
+
+      - name: Validate Collector and Tempo YAML are well-formed
+        run: |
+          python3 -c "import yaml, sys; yaml.safe_load(open('compose/otel-collector-config.yaml'))"
+          python3 -c "import yaml, sys; yaml.safe_load(open('compose/tempo/tempo.yaml'))"
+          python3 -c "import yaml, sys; yaml.safe_load(open('compose/grafana/provisioning/datasources/tempo.yaml'))"
+          python3 -c "import yaml, sys; yaml.safe_load(open('compose/grafana/provisioning/dashboards/dashboards.yaml'))"
+
+      - name: Validate dashboard JSON is well-formed
+        run: python3 -c "import json; json.load(open('compose/grafana/dashboards/envoy-command-telemetry.json'))"
+
+      - name: Require VERSIONS.lock and THIRD_PARTY_LICENSES to exist
+        run: |
+          test -f VERSIONS.lock
+          test -f THIRD_PARTY_LICENSES/README.md
+
+      - name: Fail if any image reference uses the `latest` tag
+        run: |
+          if grep -E "image:\s*\S+:latest" compose/docker-compose.yml; then
+            echo "::error::docker-compose.yml must never pin an image to :latest"
+            exit 1
+          fi
+
+  publish-dry-run:
+    name: engit publish bundle --dry-run
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout telemetry bundle
+        uses: actions/checkout@v7
+        with:
+          path: telemetry
+
+      - name: Checkout envoy_utils (provides engit)
+        uses: actions/checkout@v7
+        with:
+          repository: gtvfx-envoy/envoy_utils
+          ref: main
+          path: envoy_utils
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build engit
+        working-directory: envoy_utils/rust
+        run: cargo build --release -p engit-cli
+
+      - name: Stage placeholder artifacts for the dry run
+        # A real publish resolves real binaries/native artifacts via
+        # ${ENVOY_STUDIO_ARTIFACTS}; --dry-run only needs to see that the
+        # manifest's `source` paths exist and resolve, so placeholders are
+        # enough to validate the manifest itself here.
+        run: |
+          mkdir -p staged/telemetry/controller/windows-x86_64 staged/telemetry/controller/linux-x86_64 \
+            staged/telemetry/controller/macos-x86_64 staged/telemetry/controller/macos-aarch64 \
+            staged/telemetry/native/linux-x86_64
+          touch staged/telemetry/controller/windows-x86_64/telemetry-controller.exe
+          touch staged/telemetry/controller/linux-x86_64/telemetry-controller
+          touch staged/telemetry/controller/macos-x86_64/telemetry-controller
+          touch staged/telemetry/controller/macos-aarch64/telemetry-controller
+          touch staged/telemetry/native/linux-x86_64/placeholder
+
+      - name: Run engit publish bundle --dry-run
+        working-directory: telemetry
+        env:
+          ENVOY_STUDIO_ARTIFACTS: ${{ github.workspace }}/staged
+        run: ${{ github.workspace }}/envoy_utils/rust/target/release/engit publish bundle --dry-run

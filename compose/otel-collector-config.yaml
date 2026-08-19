@@ -1,0 +1,68 @@
+# OpenTelemetry Collector pipeline for the envoy telemetry bundle.
+#
+# OTLP/HTTP receiver (network-reachable, bearer-token-checked) -> memory
+# limiter -> redaction backstop -> batch processor -> Tempo exporter.
+# Command spans are never sampled.
+
+extensions:
+  bearertokenauth:
+    scheme: "Bearer"
+    tokens:
+      - "${env:COLLECTOR_BEARER_TOKEN}"
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: bearertokenauth
+
+processors:
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 512
+    spike_limit_mib: 128
+
+  # Secondary attribute sanitization -- a redaction backstop mirroring
+  # envoy-core's own pattern-based scan (JWT-shaped strings, bearer-token
+  # headers, URL-embedded and connection-string credentials), in case a
+  # client is an older or unpatched envoy version. This must never be the
+  # *only* redaction layer: the client always redacts first, before a
+  # record is ever written to disk or sent anywhere.
+  redaction:
+    allow_all_keys: true
+    blocked_values:
+      - '[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
+      - '(?i)bearer\s+\S{8,}'
+      - '[a-zA-Z][a-zA-Z0-9+.-]*://[^/\s:@]+:[^/\s@]+@'
+      - '(?i)(password|pwd|accountkey|secret)\s*=\s*[^;]+'
+    summary: debug
+
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+service:
+  extensions: [bearertokenauth, health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      # No sampling processor in this pipeline -- command spans are never
+      # sampled, matching the plan's explicit requirement.
+      processors: [memory_limiter, redaction, batch]
+      exporters: [otlp/tempo]
+  telemetry:
+    # Disable the Collector's own upstream usage reporting/telemetry.
+    metrics:
+      level: none
+    logs:
+      level: info

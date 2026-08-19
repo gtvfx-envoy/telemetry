@@ -1,0 +1,8 @@
+{
+    "+=PATH": [
+        "${__BUNDLE__}/bin/linux-x86_64",
+        "${__BUNDLE__}/bin/windows-x86_64",
+        "${__BUNDLE__}/bin/macos-x86_64",
+        "${__BUNDLE__}/bin/macos-aarch64"
+    ]
+}
