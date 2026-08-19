@@ -69,7 +69,7 @@ envoy telemetry configure --retention-days=N
 ### Retention
 
 30 days by default. Tempo's own config file
-(`compose/tempo/tempo.yaml`'s `compactor.compaction.block_retention`) is
+(`compose/tempo/tempo.yaml`'s `overrides.block_retention`) is
 the durable source of truth; `envoy telemetry configure
 --retention-days=N` is a convenience wrapper that edits it (and prompts
 you to restart the server so Tempo picks up the change) rather than

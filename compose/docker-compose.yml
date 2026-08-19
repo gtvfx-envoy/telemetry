@@ -33,11 +33,19 @@ services:
       # Network-reachable (not loopback-only): every workstation on the
       # studio network must be able to reach this, not just the host.
       - "0.0.0.0:4318:4318"
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:13133/"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
+    # No Docker-level healthcheck here: the upstream
+    # otel/opentelemetry-collector-contrib image is a minimal, mostly
+    # distroless image with no shell, wget, or curl -- confirmed directly
+    # (`docker exec` fails to find `wget`, `sh`, or any equivalent), and
+    # the otelcol-contrib binary itself has no probe/healthcheck
+    # subcommand (only completion/components/featuregate/help/
+    # print-config/validate). A `test:` here could never actually succeed
+    # and would eventually report "unhealthy" forever regardless of real
+    # status -- worse than no healthcheck at all. The collector's own
+    # `health_check` extension (still configured below, port 13133) is
+    # real and useful for an *external* probe (e.g. from the host or
+    # another container that does have a shell), just not one Docker's
+    # container-internal `healthcheck:` can use against this image.
     networks:
       - telemetry
 
@@ -98,6 +106,15 @@ services:
       - "--drop-dir=/drop"
       - "--collector-endpoint=http://collector:4318/v1/traces"
       - "--poll-interval-seconds=10"
+    environment:
+      # The sweep runs in its own container with no access to the host's
+      # `~/.envoy` state file, so the shared bearer token must be passed
+      # explicitly here rather than relying on `telemetry-controller`'s
+      # own state-file fallback (which would silently resolve to "no
+      # token" inside this container and cause every forward attempt to
+      # be rejected as unauthenticated -- confirmed directly during
+      # end-to-end testing).
+      - COLLECTOR_BEARER_TOKEN=${COLLECTOR_BEARER_TOKEN:?telemetry-controller must set this}
     volumes:
       # The shared network/UNC drop path every workstation's
       # ENVOY_TELEMETRY_ENDPOINT points at, bind-mounted into the sweep

@@ -99,10 +99,16 @@ fn ensure_generated_credentials(state: &mut ServerState) {
     }
 }
 
-fn start_compose(state: &ServerState) -> Result<(), String> {
-    let compose_file = compose::default_compose_file()
-        .ok_or_else(|| "could not locate docker-compose.yml alongside this binary".to_string())?;
-    let env = [
+/// Build the env-var set every `docker compose` invocation must supply so
+/// the compose file's required (`:?`) interpolations succeed.
+///
+/// This matters for *every* subcommand, not just `up`: `docker compose`
+/// interpolates the whole compose file (including `environment:` blocks)
+/// before running any subcommand, so `down`, `ps`, and `logs` all fail with
+/// "variable ... is missing a value" unless these are supplied too, even
+/// though those subcommands don't use the values themselves.
+fn compose_env_from_state(state: &ServerState) -> [(&'static str, String); 4] {
+    [
         (
             "GRAFANA_ADMIN_PASSWORD",
             state.grafana_admin_password.clone().unwrap_or_default(),
@@ -119,7 +125,13 @@ fn start_compose(state: &ServerState) -> Result<(), String> {
             "TEMPO_RETENTION_HOURS",
             (state.retention_days.unwrap_or(30) * 24).to_string(),
         ),
-    ];
+    ]
+}
+
+fn start_compose(state: &ServerState) -> Result<(), String> {
+    let compose_file = compose::default_compose_file()
+        .ok_or_else(|| "could not locate docker-compose.yml alongside this binary".to_string())?;
+    let env = compose_env_from_state(state);
     compose::up(&compose_file, &env)?;
 
     // Best-effort: provision the shared "studio-viewer" account once
@@ -201,7 +213,8 @@ fn is_already_running(state: &ServerState) -> bool {
     match state.runtime {
         Some(RuntimeKind::Compose) => compose::default_compose_file()
             .map(|compose_file| {
-                compose::ps_json(&compose_file)
+                let env = compose_env_from_state(state);
+                compose::ps_json(&compose_file, &env)
                     .map(|json| !json.trim().is_empty())
                     .unwrap_or(false)
             })
@@ -227,7 +240,7 @@ pub fn stop() -> i32 {
                 eprintln!("Error: could not locate docker-compose.yml alongside this binary.");
                 return 1;
             };
-            if let Err(message) = compose::down(&compose_file) {
+            if let Err(message) = compose::down(&compose_file, &compose_env_from_state(&state)) {
                 eprintln!("Error stopping Compose stack: {message}");
                 return 1;
             }
@@ -350,7 +363,7 @@ pub fn logs(service: Option<&str>) -> i32 {
                 eprintln!("Error: could not locate docker-compose.yml alongside this binary.");
                 return 1;
             };
-            match compose::logs(&compose_file, service) {
+            match compose::logs(&compose_file, service, &compose_env_from_state(&state)) {
                 Ok(()) => 0,
                 Err(message) => {
                     eprintln!("Error: {message}");
@@ -429,15 +442,25 @@ not found yet (will apply on the next `start`)."
     0
 }
 
-/// `telemetry-controller sweep --drop-dir DIR --collector-endpoint URL [--daemon]`.
+/// `telemetry-controller sweep --drop-dir DIR --collector-endpoint URL
+/// [--bearer-token TOKEN] [--daemon]`.
+///
+/// `bearer_token_override` (from the `--bearer-token` flag / its
+/// `COLLECTOR_BEARER_TOKEN` env var) takes precedence over the token in
+/// `telemetry-controller`'s own state file. The override is what the
+/// sweep's own compose service actually uses in practice -- the sweep
+/// normally runs inside its own container, which has no access to the
+/// host's config root/state file at all, so falling back to `load_state()`
+/// alone would silently resolve to "no token" and reject every forward
+/// attempt as unauthenticated.
 pub fn sweep_command(
     drop_dir: &std::path::Path,
     collector_endpoint: &str,
+    bearer_token_override: Option<&str>,
     daemon: bool,
     poll_interval: Duration,
 ) -> i32 {
-    let state = load_state();
-    let bearer_token = state.collector_bearer_token.clone();
+    let bearer_token = resolve_sweep_bearer_token(bearer_token_override, &load_state());
     let mut retry_counts = std::collections::HashMap::new();
 
     loop {
@@ -470,4 +493,51 @@ fn now_timestamp() -> String {
     // for a human-readable "started at" field; not full RFC 3339 to avoid
     // pulling in a date/time crate for this alone).
     format!("unix:{}", now.as_secs())
+}
+
+/// Resolve the bearer token the sweep should present to the Collector: the
+/// explicit `--bearer-token`/`COLLECTOR_BEARER_TOKEN` override always wins
+/// when present, falling back to the controller's own state file only when
+/// no override was given (e.g. a hypothetical future native-mode sweep
+/// running on the same host as the controller, with real access to its
+/// state file).
+fn resolve_sweep_bearer_token(override_value: Option<&str>, state: &ServerState) -> Option<String> {
+    override_value
+        .map(str::to_string)
+        .or_else(|| state.collector_bearer_token.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_override_wins_even_when_state_has_a_token() {
+        let state = ServerState {
+            collector_bearer_token: Some("state-token".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_sweep_bearer_token(Some("override-token"), &state),
+            Some("override-token".to_string())
+        );
+    }
+
+    #[test]
+    fn falls_back_to_state_token_when_no_override_given() {
+        let state = ServerState {
+            collector_bearer_token: Some("state-token".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_sweep_bearer_token(None, &state),
+            Some("state-token".to_string())
+        );
+    }
+
+    #[test]
+    fn returns_none_when_neither_override_nor_state_has_a_token() {
+        let state = ServerState::default();
+        assert_eq!(resolve_sweep_bearer_token(None, &state), None);
+    }
 }

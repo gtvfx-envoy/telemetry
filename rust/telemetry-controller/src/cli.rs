@@ -55,6 +55,18 @@ pub enum Commands {
         drop_dir: PathBuf,
         #[arg(long)]
         collector_endpoint: String,
+        /// Shared bearer token to present to the Collector's OTLP
+        /// receiver. Explicit (via this flag or the `COLLECTOR_BEARER_TOKEN`
+        /// env var) rather than read from `telemetry-controller`'s own
+        /// state file, since the sweep normally runs inside its own
+        /// container with no access to the host's config root -- falling
+        /// back to `load_state()` there would always resolve to "no
+        /// token configured" and cause every forward attempt to be
+        /// rejected as unauthenticated. Confirmed directly: the sweep
+        /// silently retried every dropped file forever until this was
+        /// wired through explicitly.
+        #[arg(long, env = "COLLECTOR_BEARER_TOKEN")]
+        bearer_token: Option<String>,
         /// Run continuously, polling every `--poll-interval-seconds`,
         /// instead of a single pass.
         #[arg(long)]
@@ -85,11 +97,13 @@ pub fn run(argv: &[String]) -> i32 {
         Commands::Sweep {
             drop_dir,
             collector_endpoint,
+            bearer_token,
             daemon,
             poll_interval_seconds,
         } => crate::commands::sweep_command(
             &drop_dir,
             &collector_endpoint,
+            bearer_token.as_deref(),
             daemon,
             Duration::from_secs(poll_interval_seconds),
         ),

@@ -30,36 +30,55 @@ fn find_compose_file_from(start: &Path) -> Option<PathBuf> {
     None
 }
 
-fn compose_command(compose_file: &Path) -> Command {
+fn compose_command(compose_file: &Path, env: &[(&str, String)]) -> Command {
     let mut command = Command::new("docker");
     command.arg("compose").arg("-f").arg(compose_file);
-    command
-}
-
-/// `docker compose up -d`, applying `env` on top of the current process
-/// environment for values the compose file interpolates (bearer token,
-/// generated Grafana passwords, retention).
-pub fn up(compose_file: &Path, env: &[(&str, String)]) -> Result<(), String> {
-    let mut command = compose_command(compose_file);
-    command.args(["up", "-d"]);
+    // Every `docker compose` subcommand (not just `up`) interpolates the
+    // compose file's `environment:` blocks up front, including the
+    // required (`:?`) bearer token and Grafana password references -- so
+    // `down`, `ps`, and `logs` all fail with "variable ... is missing a
+    // value" unless the same env vars are supplied, even though those
+    // subcommands don't logically need the values themselves. Apply `env`
+    // unconditionally here so every caller gets this for free.
     for (key, value) in env {
         command.env(key, value);
     }
+    command
+}
+
+/// `docker compose up -d --build`, applying `env` on top of the current
+/// process environment for values the compose file interpolates (bearer
+/// token, generated Grafana passwords, retention).
+///
+/// `--build` is load-bearing, not cosmetic: `docker compose up` alone only
+/// builds a `build:`-context service's image the *first* time it's ever
+/// missing -- it silently reuses a stale cached image on every subsequent
+/// `up`, even after the build context's contents (e.g. a newly-published
+/// `telemetry-controller` binary the sweep image `COPY`s in) have changed.
+/// Confirmed directly: without `--build`, `start` kept running the sweep
+/// container against an old binary after a rebuild, with no error --
+/// exactly the kind of silent staleness this bundle's version-skew policy
+/// (see envoy-core::telemetry::schema) is meant to avoid. Docker's layer
+/// cache keeps the common no-change case fast.
+pub fn up(compose_file: &Path, env: &[(&str, String)]) -> Result<(), String> {
+    let mut command = compose_command(compose_file, env);
+    command.args(["up", "-d", "--build"]);
     run_checked(command)
 }
 
 /// `docker compose down`, deliberately without `-v`: stopping the server
-/// must always preserve telemetry data.
-pub fn down(compose_file: &Path) -> Result<(), String> {
-    let mut command = compose_command(compose_file);
+/// must always preserve telemetry data. `env` must be supplied (see
+/// [`compose_command`]) even though `down` doesn't use the values itself.
+pub fn down(compose_file: &Path, env: &[(&str, String)]) -> Result<(), String> {
+    let mut command = compose_command(compose_file, env);
     command.arg("down");
     run_checked(command)
 }
 
 /// `docker compose ps --format json`, returning the raw (newline-delimited
 /// JSON) stdout for the caller to parse.
-pub fn ps_json(compose_file: &Path) -> Result<String, String> {
-    let mut command = compose_command(compose_file);
+pub fn ps_json(compose_file: &Path, env: &[(&str, String)]) -> Result<String, String> {
+    let mut command = compose_command(compose_file, env);
     command
         .args(["ps", "--format", "json"])
         .stdout(Stdio::piped());
@@ -72,8 +91,12 @@ pub fn ps_json(compose_file: &Path) -> Result<String, String> {
 
 /// `docker compose logs [SERVICE]`, streamed directly to this process's own
 /// stdout/stderr.
-pub fn logs(compose_file: &Path, service: Option<&str>) -> Result<(), String> {
-    let mut command = compose_command(compose_file);
+pub fn logs(
+    compose_file: &Path,
+    service: Option<&str>,
+    env: &[(&str, String)],
+) -> Result<(), String> {
+    let mut command = compose_command(compose_file, env);
     command.arg("logs").arg("--no-color").arg("--tail=200");
     if let Some(service) = service {
         command.arg(service);

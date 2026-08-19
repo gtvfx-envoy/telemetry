@@ -1,19 +1,33 @@
 //! Tempo retention configuration.
 //!
-//! Tempo's own compactor config file remains the durable source of truth
-//! for the active retention period; `telemetry-controller configure
+//! Tempo's own config file remains the durable source of truth for the
+//! active retention period; `telemetry-controller configure
 //! --retention-days=N` is a thin convenience wrapper that edits this one
 //! field (and, when the server is running, reloads Tempo) rather than
 //! requiring an operator to hand-edit YAML. The config file survives a
 //! controller reinstall since it lives in the published bundle, not under
 //! the config root.
+//!
+//! Retention lives at `overrides.block_retention` (flat, no `defaults:`
+//! wrapper, requiring `overrides.enable_legacy_overrides: true`
+//! alongside it), not under a `compactor:` block -- Tempo 3.x removed
+//! `ingester:`/`compactor:` entirely, in every deployment mode including
+//! monolithic, per the official "Migrate from Tempo 2.x to 3.0" guide.
+//! Confirmed directly against the real `grafana/tempo:3.0.3` binary via
+//! `-config.verify=true`: `compactor.compaction.block_retention` fails
+//! ("field compactor not found"), `overrides.defaults.block_retention`
+//! also fails ("unknown extension key" / "field defaults not found in
+//! type overrides.legacyConfig" -- the legacy overrides struct has no
+//! `defaults` wrapper), and only the flat `overrides.block_retention`
+//! shape parses successfully (with an expected, harmless deprecation
+//! warning about the legacy overrides format).
 
 use std::fs;
 use std::path::Path;
 
 use serde_yaml::{Mapping, Value};
 
-const RETENTION_PATH: &[&str] = &["compactor", "compaction", "block_retention"];
+const RETENTION_PATH: &[&str] = &["overrides", "block_retention"];
 
 /// Set the retention period, in days, in the Tempo config file at
 /// `tempo_config_path`. Stored as Tempo's own Go-duration-string format
@@ -97,7 +111,7 @@ mod tests {
     fn write_base_config(path: &Path) {
         fs::write(
             path,
-            "server:\n  http_listen_port: 3200\ncompactor:\n  compaction:\n    block_retention: 720h\n",
+            "server:\n  http_listen_port: 3200\noverrides:\n  enable_legacy_overrides: true\n  block_retention: 720h\n",
         )
         .expect("base config should be written");
     }

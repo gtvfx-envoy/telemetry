@@ -19,22 +19,40 @@ jobs:
           - runner: windows-2025
             target_name: windows-x86_64
             binary_name: telemetry-controller.exe
+            container: ""
           - runner: ubuntu-24.04
             target_name: linux-x86_64
             binary_name: telemetry-controller
+            # Build inside a container matching the sweep service's own
+            # runtime base image (debian:bookworm-slim, see
+            # compose/sweep/Dockerfile), not directly on the ubuntu-24.04
+            # runner. A binary built against a newer host glibc (Ubuntu
+            # 24.04 ships 2.39) fails to even start inside bookworm-slim
+            # (glibc 2.36) with "version `GLIBC_2.39' not found" --
+            # confirmed directly during live end-to-end testing. This
+            # must stay in sync with the base image tag in
+            # compose/sweep/Dockerfile and the pinned version in
+            # VERSIONS.lock.
+            container: "rust:1-bookworm"
           - runner: macos-15-intel
             target_name: macos-x86_64
             binary_name: telemetry-controller
+            container: ""
           - runner: macos-15
             target_name: macos-aarch64
             binary_name: telemetry-controller
+            container: ""
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container != '' && matrix.container || null }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Install stable Rust toolchain
+        # Skipped when running inside the rust:1-bookworm container, which
+        # already has a stable toolchain preinstalled.
+        if: matrix.container == ''
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry/build artifacts
