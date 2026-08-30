@@ -27,3 +27,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    steps:
+      # No environment customization needed -- this job exists solely to
+      # pin runs-on to a supported Linux runner. `steps` is a required
+      # field for a normal (non reusable-workflow-call) job, so a no-op
+      # placeholder satisfies that without adding unnecessary setup.
+      - name: No-op
+        run: echo "Copilot code review runner configured (ubuntu-latest)."
