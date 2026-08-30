@@ -1,0 +1,57 @@
+# Tempo configuration for the envoy telemetry bundle.
+#
+# Monolithic single-binary mode with persistent local storage, sized for
+# one (or a small number of) studio server(s) -- not a distributed
+# deployment. See ../../README.md for the horizontal-scaling upgrade path
+# (distributed Tempo, Mimir) if volume ever outgrows this.
+#
+# Tempo 3.x removed the `ingester:`/`compactor:` blocks entirely (even in
+# monolithic mode -- confirmed against the real grafana/tempo:3.0.3 image
+# and the official "Migrate from Tempo 2.x to 3.0" guide, which explicitly
+# lists both as "removed" for every deployment mode); retention is now an
+# `overrides` setting instead. Retention (`overrides.block_retention`
+# below) is normally managed via `envoy telemetry configure
+# --retention-days=N` (telemetry-controller rewrites this field and reloads
+# Tempo) rather than hand-edited -- this file remains the durable source of
+# truth either way.
+
+server:
+  http_listen_port: 3200
+  log_level: info
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal
+
+overrides:
+  # Tempo 3.0 disables the flat/unscoped ("legacy") overrides format by
+  # default in favor of a new per-tenant "scoped" format; `block_retention`
+  # directly under `overrides:` (no `defaults:` wrapper -- confirmed
+  # directly against the real grafana/tempo:3.0.3 binary via
+  # `-config.verify=true`; Tempo's own Go struct for the *scoped* format
+  # has no top-level `defaults` field at all, hence needing this) is
+  # exactly that legacy format, and Tempo refuses to start without this
+  # explicitly opted back in. Documented by Tempo itself as a supported
+  # (if eventually-deprecated) migration path; revisit the scoped format
+  # if/when true per-tenant overrides are needed, which this
+  # single-tenant bundle does not.
+  enable_legacy_overrides: true
+  # 30 days by default (studio-configurable).
+  block_retention: 720h
+
+# Upstream usage reporting disabled -- this bundle never phones home.
+usage_report:
+  reporting_enabled: false

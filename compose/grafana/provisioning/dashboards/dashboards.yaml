@@ -1,0 +1,17 @@
+apiVersion: 1
+
+# Provisions the "Envoy Command Telemetry" dashboard from a version-controlled
+# JSON file (../dashboards/envoy-command-telemetry.json). Immutable: UI
+# edits are disabled and deletion through the UI is blocked, so the
+# dashboard shown to every studio user always matches what's checked into
+# this repo.
+providers:
+  - name: "Envoy Telemetry"
+    orgId: 1
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

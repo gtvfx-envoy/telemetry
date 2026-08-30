@@ -1,0 +1,19 @@
+{
+    "telemetry": {
+        "environment": [],
+        "alias": ["${__BUNDLE__}/bin/linux-x86_64/telemetry-controller"],
+        "platforms": {
+            "windows": {
+                "alias": ["${__BUNDLE__}/bin/windows-x86_64/telemetry-controller.exe"]
+            },
+            "macos": {
+                "alias": ["${__BUNDLE__}/bin/macos-x86_64/telemetry-controller"],
+                "architectures": {
+                    "aarch64": {
+                        "alias": ["${__BUNDLE__}/bin/macos-aarch64/telemetry-controller"]
+                    }
+                }
+            }
+        }
+    }
+}

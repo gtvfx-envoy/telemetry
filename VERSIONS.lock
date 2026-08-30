@@ -1,0 +1,66 @@
+# Version lock for the envoy telemetry bundle
+#
+# Every pinned dependency below. Never use `latest` for any image or
+# artifact. Update this file (and the corresponding references in
+# compose/docker-compose.yml / the native-artifact staging step) together,
+# in the same change, whenever a version is bumped.
+#
+# NOTE ON DIGESTS: the `docker-compose.yml` in this bundle currently pins
+# each image to a specific, real upstream version tag (never `latest`).
+# Resolving each tag to its immutable `sha256:` digest requires a live
+# registry pull (`docker pull <image> && docker inspect --format='{{index
+# .RepoDigests 0}}' <image>`), which isn't possible to do accurately from
+# a plain text edit. Whoever runs the first real publish MUST resolve and
+# record the digests below, and switch docker-compose.yml's `image:` lines
+# from `repo:tag` to `repo:tag@sha256:...` before that publish ships.
+
+schema_version: 1
+
+images:
+  - name: grafana/grafana
+    tag: "13.0.6"
+    digest: "TODO: resolve at publish time (see note above)"
+    license: AGPL-3.0-only
+    source: https://github.com/grafana/grafana
+
+  - name: grafana/tempo
+    tag: "3.0.3"
+    digest: "TODO: resolve at publish time (see note above)"
+    license: Apache-2.0
+    source: https://github.com/grafana/tempo
+
+  - name: otel/opentelemetry-collector-contrib
+    tag: "0.159.0"
+    digest: "TODO: resolve at publish time (see note above)"
+    license: Apache-2.0
+    source: https://github.com/open-telemetry/opentelemetry-collector-contrib
+
+  - name: debian
+    tag: "bookworm-slim"
+    digest: "TODO: resolve at publish time (see note above)"
+    license: multiple (base OS image; see Debian's own licensing)
+    source: https://github.com/debuerreotype/debuerreotype
+    note: base image for the sweep service's own Dockerfile (compose/sweep/Dockerfile)
+
+# Native (Docker-free) Linux x86-64 artifacts, staged from each project's
+# own upstream release archive per .envoy/publish-manifest.yaml. Checksums
+# are SHA-256 of the released archive/binary and MUST be verified by
+# whoever stages the artifact before publish.
+native_artifacts:
+  - name: grafana
+    version: "13.0.6"
+    archive: grafana-13.0.6.linux-amd64.tar.gz
+    sha256: "TODO: record the real published archive's checksum at staging time"
+    source: https://github.com/grafana/grafana/releases
+
+  - name: tempo
+    version: "3.0.3"
+    archive: tempo_3.0.3_linux_amd64.tar.gz
+    sha256: "TODO: record the real published archive's checksum at staging time"
+    source: https://github.com/grafana/tempo/releases
+
+  - name: opentelemetry-collector-contrib
+    version: "0.159.0"
+    archive: otelcol-contrib_0.159.0_linux_amd64.tar.gz
+    sha256: "TODO: record the real published archive's checksum at staging time"
+    source: https://github.com/open-telemetry/opentelemetry-collector-releases/releases

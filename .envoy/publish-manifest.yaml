@@ -1,0 +1,61 @@
+# Publish manifest for the envoy telemetry bundle.
+#
+# Mirrors the pattern already used by ext/python, ext/pyside, and
+# ext/qtshim in the main `envoy` repo: reference artifacts pre-staged under
+# `${ENVOY_STUDIO_ARTIFACTS}` by CI, rather than committing compiled
+# binaries or third-party vendor archives into this repo.
+#
+# - Controller binaries are built by this bundle's own CI
+#   (.github/workflows/build-release.yml) for the same 4 platforms
+#   envoy-cli's own release matrix covers, then staged here before
+#   `engit publish bundle` runs.
+# - Native Linux x86-64 Grafana/Tempo/Collector artifacts are fetched
+#   from each project's own upstream release and staged the same way, for
+#   operators who prefer not to run Docker on the server (see
+#   VERSIONS.lock for the exact pinned versions/checksums).
+# - Upstream license/notice text lives directly under THIRD_PARTY_LICENSES/
+#   in this repo (small, stable text files) rather than being staged like
+#   the compiled artifacts above, so it ships in every publish
+#   automatically as an ordinary tracked file (matches engit's own
+#   `THIRD_PARTY_LICENSES*` default include pattern -- no extra `include:`
+#   entry needed for it).
+#
+# Run `engit publish bundle --dry-run` to verify this manifest resolves to
+# exactly the expected published-runtime contents before a real publish.
+
+# `compose/**` isn't one of engit's default runtime include globs (unlike
+# `.envoy/**`, `bin/**`, `LICENSE*`, `THIRD_PARTY_LICENSES*`, ...), so it
+# must be added explicitly -- this is what `telemetry-controller` searches
+# for alongside its own binary at runtime (see rust/telemetry-controller/
+# src/compose.rs and native.rs).
+include:
+  - "compose/**"
+
+artifacts:
+  # Controller binaries, one per supported platform. Each `source` is a
+  # directory containing exactly that platform's binary (matching the
+  # `ext/python`-style directory-tree-copy contract: engit copies the
+  # *contents* of `source` into `destination`, not `source` itself).
+  # `include: ["**"]` is required here since engit's default runtime
+  # globs (bin/**, resources/**, ...) apply relative to *this* artifact's
+  # own source root too, and a bare binary file at that root doesn't match
+  # any of them on its own.
+  - source: ${ENVOY_STUDIO_ARTIFACTS}/telemetry/controller/windows-x86_64
+    destination: bin/windows-x86_64
+    include: ["**"]
+  - source: ${ENVOY_STUDIO_ARTIFACTS}/telemetry/controller/linux-x86_64
+    destination: bin/linux-x86_64
+    include: ["**"]
+  - source: ${ENVOY_STUDIO_ARTIFACTS}/telemetry/controller/macos-x86_64
+    destination: bin/macos-x86_64
+    include: ["**"]
+  - source: ${ENVOY_STUDIO_ARTIFACTS}/telemetry/controller/macos-aarch64
+    destination: bin/macos-aarch64
+    include: ["**"]
+
+  # Native Linux x86-64 service artifacts (Grafana, Tempo, OTel Collector
+  # Contrib), for the Docker-free native runtime. Never vendored into this
+  # repo; staged from each project's own upstream release archive.
+  - source: ${ENVOY_STUDIO_ARTIFACTS}/telemetry/native/linux-x86_64
+    destination: native
+    include: ["**"]

@@ -1,0 +1,244 @@
+{
+  "id": null,
+  "uid": "envoy-command-telemetry",
+  "title": "Envoy Command Telemetry",
+  "description": "Fleet-wide envoy command usage, aggregated from every workstation's envoy.command.run spans. Provisioned from version control (see compose/grafana/provisioning/dashboards) -- immutable via the UI. TraceQL queries reference the schema defined in envoy-core::telemetry::schema; see that module's version-skew policy before editing attribute names here.",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "graphTooltip": 1,
+  "timezone": "browser",
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "1m",
+  "tags": ["envoy", "telemetry"],
+  "templating": {
+    "list": [
+      {
+        "name": "stack",
+        "type": "textbox",
+        "label": "Stack",
+        "current": { "text": ".*", "value": ".*" },
+        "query": ".*"
+      },
+      {
+        "name": "team",
+        "type": "textbox",
+        "label": "Team",
+        "current": { "text": ".*", "value": ".*" },
+        "query": ".*"
+      },
+      {
+        "name": "command",
+        "type": "textbox",
+        "label": "Command",
+        "current": { "text": ".*", "value": ".*" },
+        "query": ".*"
+      },
+      {
+        "name": "success",
+        "type": "custom",
+        "label": "Success",
+        "query": "true,false",
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "envoy_version",
+        "type": "textbox",
+        "label": "Envoy version",
+        "current": { "text": ".*", "value": ".*" },
+        "query": ".*"
+      },
+      {
+        "name": "installation_id",
+        "type": "textbox",
+        "label": "Installation ID",
+        "current": { "text": ".*", "value": ".*" },
+        "query": ".*"
+      },
+      {
+        "name": "arg_text",
+        "type": "textbox",
+        "label": "Argument text",
+        "current": { "text": ".*", "value": ".*" },
+        "query": ".*"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Total runs",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" && span.envoy.stack.name =~ \"$stack\" && span.envoy.team =~ \"$team\" && span.envoy.command.name =~ \"$command\" && span.envoy.version =~ \"$envoy_version\" && span.envoy.installation_id =~ \"$installation_id\" } | count()"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Run rate",
+      "gridPos": { "h": 6, "w": 10, "x": 6, "y": 0 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" && span.envoy.stack.name =~ \"$stack\" && span.envoy.command.name =~ \"$command\" } | rate()"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "piechart",
+      "title": "Success / failure rate",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" && span.envoy.stack.name =~ \"$stack\" } | count() by (span.envoy.success)"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Duration: p50 / p95 / p99 (ms)",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "refId": "p50",
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" && span.envoy.command.name =~ \"$command\" } | quantile_over_time(span.envoy.duration_ms, .5) by (span.envoy.command.name)"
+        },
+        {
+          "refId": "p95",
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" && span.envoy.command.name =~ \"$command\" } | quantile_over_time(span.envoy.duration_ms, .95) by (span.envoy.command.name)"
+        },
+        {
+          "refId": "p99",
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" && span.envoy.command.name =~ \"$command\" } | quantile_over_time(span.envoy.duration_ms, .99) by (span.envoy.command.name)"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "barchart",
+      "title": "Runs and failures by command",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "refId": "runs",
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" } | count() by (span.envoy.command.name)"
+        },
+        {
+          "refId": "failures",
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" && span.envoy.success = false } | count() by (span.envoy.command.name)"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "barchart",
+      "title": "Runs and failures by stack",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 13 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "refId": "runs",
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" } | count() by (span.envoy.stack.name)"
+        },
+        {
+          "refId": "failures",
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" && span.envoy.success = false } | count() by (span.envoy.stack.name)"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Slowest commands",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 13 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" } | select(span.envoy.command.name, span.envoy.duration_ms, span.envoy.stack.name) | sort(span.envoy.duration_ms desc) | limit(50)"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "barchart",
+      "title": "Version adoption",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 20 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" } | count() by (span.envoy.version)"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Delivered-via-spool-retry rate (ingestion health)",
+      "description": "Fraction of command.run records that were delivered via a later spool-retry flush rather than on the first attempt. A sustained rise usually means a workstation (or the sweep itself) is falling behind. Backlog size and oldest-unswept-file age are live filesystem state, not trace data, and are not representable in a Tempo-only v1 dashboard -- check `envoy telemetry status` on the server for those.",
+      "gridPos": { "h": 7, "w": 16, "x": 8, "y": 20 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "refId": "retried",
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" && span.envoy.telemetry.delivered_via_retry = true } | rate()"
+        },
+        {
+          "refId": "total",
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" } | rate()"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Recent invocations",
+      "description": "Redacted argv, stack, duration, status, and exit code for every filtered invocation. Click a row's trace ID to open its full trace detail.",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 27 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "queryType": "traceql",
+          "query": "{ name = \"envoy.command.run\" && span.envoy.stack.name =~ \"$stack\" && span.envoy.team =~ \"$team\" && span.envoy.command.name =~ \"$command\" && span.envoy.version =~ \"$envoy_version\" && span.envoy.installation_id =~ \"$installation_id\" && span.envoy.cli.argv_display =~ \"$arg_text\" } | select(span.envoy.command.name, span.envoy.cli.argv_display, span.envoy.stack.name, span.envoy.duration_ms, span.envoy.success, span.envoy.exit_code) | sort(span.envoy.duration_ms desc) | limit(200)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "traceID" },
+            "properties": [
+              { "id": "links", "value": [{ "title": "View trace", "url": "/explore?left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22query%22:%22${__value.raw}%22%7D%5D%7D" }] }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

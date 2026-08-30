@@ -1,0 +1,134 @@
+# Envoy telemetry bundle -- shared studio infrastructure.
+#
+# Run as shared infrastructure on one (or a small number of) server(s),
+# operated by pipeline/IT -- never on individual artist workstations.
+# Workstations only need `ENVOY_TELEMETRY_ENDPOINT` resolved (typically via
+# the studio's own `gt/envoy` bundle's `global_env.json`) and envoy's
+# built-in exporter; they never need Docker.
+#
+# Image versions are pinned to specific tags (see ../VERSIONS.lock for the
+# full version/digest ledger) -- never `latest`.
+#
+# Lifecycle is managed by `telemetry-controller` (`envoy telemetry
+# start|stop|status|logs|open|configure`), not by running `docker compose`
+# directly -- but this file is a normal Compose file and can be inspected
+# or driven manually by an operator who prefers to.
+
+services:
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.159.0
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol/otel-collector-config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol/otel-collector-config.yaml:ro
+    environment:
+      # Shared bearer token every OTLP submission must present (see
+      # otel-collector-config.yaml's bearertokenauth extension). Generated
+      # and persisted by `telemetry-controller start`.
+      - COLLECTOR_BEARER_TOKEN=${COLLECTOR_BEARER_TOKEN:?telemetry-controller must set this}
+      # Disable upstream usage reporting / telemetry for the Collector
+      # itself.
+      - OTEL_COLLECTOR_DISABLE_TELEMETRY=true
+    ports:
+      # Network-reachable (not loopback-only): every workstation on the
+      # studio network must be able to reach this, not just the host.
+      - "0.0.0.0:4318:4318"
+    # No Docker-level healthcheck here: the upstream
+    # otel/opentelemetry-collector-contrib image is a minimal, mostly
+    # distroless image with no shell, wget, or curl -- confirmed directly
+    # (`docker exec` fails to find `wget`, `sh`, or any equivalent), and
+    # the otelcol-contrib binary itself has no probe/healthcheck
+    # subcommand (only completion/components/featuregate/help/
+    # print-config/validate). A `test:` here could never actually succeed
+    # and would eventually report "unhealthy" forever regardless of real
+    # status -- worse than no healthcheck at all. The collector's own
+    # `health_check` extension (still configured below, port 13133) is
+    # real and useful for an *external* probe (e.g. from the host or
+    # another container that does have a shell), just not one Docker's
+    # container-internal `healthcheck:` can use against this image.
+    networks:
+      - telemetry
+
+  tempo:
+    image: grafana/tempo:3.0.3
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    environment:
+      - TEMPO_RETENTION_HOURS=${TEMPO_RETENTION_HOURS:-720}
+    # Deliberately no `ports:` mapping -- Tempo is never network-exposed
+    # directly, only reachable by sibling containers (Collector, Grafana)
+    # over the internal Compose network.
+    networks:
+      - telemetry
+
+  grafana:
+    image: grafana/grafana:13.0.6
+    restart: unless-stopped
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?telemetry-controller must set this}
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_AUTH_BASIC_ENABLED=true
+      - GF_AUTH_DISABLE_LOGIN_FORM=false
+      # Documented no-SSO default: a shared "studio-viewer" org user is
+      # provisioned by telemetry-controller on first `start` (see
+      # provisioning/dashboards + the controller's grafana module) with
+      # this generated password. SSO/LDAP is an optional upgrade path
+      # configured separately (see ../README.md) and, when enabled,
+      # supersedes this shared-credential default.
+      - GRAFANA_VIEWER_PASSWORD=${GRAFANA_VIEWER_PASSWORD:?telemetry-controller must set this}
+      # Disable upstream usage reporting / update checks.
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
+      - GF_NEWS_NEWS_FEED_ENABLED=false
+    ports:
+      - "3000:3000"
+    depends_on:
+      - tempo
+    networks:
+      - telemetry
+
+  sweep:
+    build:
+      context: ../native
+      dockerfile: ../compose/sweep/Dockerfile
+    restart: unless-stopped
+    command:
+      - "sweep"
+      - "--daemon"
+      - "--drop-dir=/drop"
+      - "--collector-endpoint=http://collector:4318/v1/traces"
+      - "--poll-interval-seconds=10"
+    environment:
+      # The sweep runs in its own container with no access to the host's
+      # `~/.envoy` state file, so the shared bearer token must be passed
+      # explicitly here rather than relying on `telemetry-controller`'s
+      # own state-file fallback (which would silently resolve to "no
+      # token" inside this container and cause every forward attempt to
+      # be rejected as unauthenticated -- confirmed directly during
+      # end-to-end testing).
+      - COLLECTOR_BEARER_TOKEN=${COLLECTOR_BEARER_TOKEN:?telemetry-controller must set this}
+    volumes:
+      # The shared network/UNC drop path every workstation's
+      # ENVOY_TELEMETRY_ENDPOINT points at, bind-mounted into the sweep
+      # container. Defaults to a local `./drop` for same-box evaluation.
+      - ${ENVOY_TELEMETRY_DROP_PATH:-./drop}:/drop
+    depends_on:
+      - collector
+    networks:
+      - telemetry
+
+networks:
+  telemetry:
+    driver: bridge
+
+volumes:
+  tempo-data:
+  grafana-data:

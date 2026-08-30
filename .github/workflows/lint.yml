@@ -1,0 +1,53 @@
+name: Lint
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  rust:
+    name: Rust (fmt + clippy + test) - ${{ matrix.os_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            os_name: Linux
+          - runner: windows-2025
+            os_name: Windows
+          - runner: macos-15
+            os_name: macOS
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry/build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Run cargo fmt --check
+        working-directory: rust
+        run: cargo fmt --check
+
+      - name: Run cargo clippy
+        working-directory: rust
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run cargo test
+        working-directory: rust
+        run: cargo test --workspace
