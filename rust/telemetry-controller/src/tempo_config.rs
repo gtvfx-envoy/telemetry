@@ -28,11 +28,16 @@ use std::path::Path;
 use serde_yaml::{Mapping, Value};
 
 const RETENTION_PATH: &[&str] = &["overrides", "block_retention"];
+const ENABLE_LEGACY_OVERRIDES_PATH: &[&str] = &["overrides", "enable_legacy_overrides"];
 
 /// Set the retention period, in days, in the Tempo config file at
 /// `tempo_config_path`. Stored as Tempo's own Go-duration-string format
 /// (e.g. `720h` for 30 days), since that is what Tempo itself expects.
 pub fn set_retention_days(tempo_config_path: &Path, days: u32) -> Result<(), String> {
+    let hours = days
+        .checked_mul(24)
+        .ok_or_else(|| format!("retention_days={days} is too large (overflows hours)"))?;
+
     let text = fs::read_to_string(tempo_config_path)
         .map_err(|error| format!("failed to read {}: {error}", tempo_config_path.display()))?;
     let mut root: Value = serde_yaml::from_str(&text)
@@ -41,8 +46,14 @@ pub fn set_retention_days(tempo_config_path: &Path, days: u32) -> Result<(), Str
     set_nested(
         &mut root,
         RETENTION_PATH,
-        Value::String(format!("{}h", days * 24)),
+        Value::String(format!("{hours}h")),
     )?;
+    // Tempo 3.x's legacy overrides struct (the only shape that accepts a
+    // flat `block_retention` -- see module docs) requires this flag
+    // alongside it, or the config is rejected outright. Always (re)assert
+    // it here, not just when the `overrides` map is created fresh, so a
+    // config that's merely missing this one field also gets repaired.
+    set_nested(&mut root, ENABLE_LEGACY_OVERRIDES_PATH, Value::Bool(true))?;
 
     let updated = serde_yaml::to_string(&root)
         .map_err(|error| format!("failed to serialize updated Tempo config: {error}"))?;
@@ -52,7 +63,10 @@ pub fn set_retention_days(tempo_config_path: &Path, days: u32) -> Result<(), Str
 }
 
 /// Read the currently-configured retention period, in days, from the Tempo
-/// config file, if present and parseable.
+/// config file, if present, parseable, and expressible in whole days (the
+/// stored hour count is a multiple of 24). A hand-edited value that isn't a
+/// whole number of days (e.g. `25h`) returns `None` rather than a silently
+/// rounded-down day count.
 pub fn get_retention_days(tempo_config_path: &Path) -> Option<u32> {
     let text = fs::read_to_string(tempo_config_path).ok()?;
     let root: Value = serde_yaml::from_str(&text).ok()?;
@@ -62,7 +76,7 @@ pub fn get_retention_days(tempo_config_path: &Path) -> Option<u32> {
 
 fn parse_hours_suffix(text: &str) -> Option<u32> {
     let hours: u32 = text.strip_suffix('h')?.parse().ok()?;
-    Some(hours / 24)
+    hours.is_multiple_of(24).then_some(hours / 24)
 }
 
 fn get_nested<'a>(root: &'a Value, path: &[&str]) -> Option<&'a Value> {
@@ -163,5 +177,46 @@ mod tests {
         write_base_config(&config_path);
 
         assert_eq!(get_retention_days(&config_path), Some(30));
+    }
+
+    #[test]
+    fn set_retention_days_asserts_enable_legacy_overrides_when_creating_keys() {
+        let temp_dir = tempdir().expect("tempdir should be created");
+        let config_path = temp_dir.path().join("tempo.yaml");
+        fs::write(&config_path, "server:\n  http_listen_port: 3200\n")
+            .expect("base config should be written");
+
+        set_retention_days(&config_path, 45).expect("should update retention");
+
+        let updated = fs::read_to_string(&config_path).expect("file should be readable");
+        let root: Value = serde_yaml::from_str(&updated).expect("updated config should parse");
+        assert_eq!(
+            get_nested(&root, ENABLE_LEGACY_OVERRIDES_PATH),
+            Some(&Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn set_retention_days_rejects_overflowing_input() {
+        let temp_dir = tempdir().expect("tempdir should be created");
+        let config_path = temp_dir.path().join("tempo.yaml");
+        write_base_config(&config_path);
+
+        let result = set_retention_days(&config_path, u32::MAX);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn get_retention_days_returns_none_for_non_multiple_of_24_hours() {
+        let temp_dir = tempdir().expect("tempdir should be created");
+        let config_path = temp_dir.path().join("tempo.yaml");
+        fs::write(
+            &config_path,
+            "server:\n  http_listen_port: 3200\noverrides:\n  enable_legacy_overrides: true\n  block_retention: 25h\n",
+        )
+        .expect("hand-edited config should be written");
+
+        assert_eq!(get_retention_days(&config_path), None);
     }
 }

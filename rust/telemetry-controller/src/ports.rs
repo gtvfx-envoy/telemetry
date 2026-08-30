@@ -5,7 +5,7 @@
 //! error up front, rather than a more cryptic failure surfaced later by
 //! Docker or the underlying service itself.
 
-use std::net::{SocketAddr, TcpListener};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener};
 
 /// The ports this bundle's services bind to on the host by default:
 /// Collector OTLP/HTTP, Tempo query API, Grafana.
@@ -15,10 +15,14 @@ pub const DEFAULT_PORTS: &[(&str, u16)] = &[
     ("grafana", 3000),
 ];
 
-/// Return `true` if `port` is free to bind on all interfaces.
+/// Return `true` if `port` is free to bind on all interfaces -- both the
+/// IPv4 and IPv6 wildcard addresses. Checking only IPv4 (as this used to)
+/// would miss a service already bound solely to `[::]:port`, incorrectly
+/// reporting the port as free.
 pub fn is_port_free(port: u16) -> bool {
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    TcpListener::bind(addr).is_ok()
+    let v4_free = TcpListener::bind(SocketAddr::from((Ipv4Addr::UNSPECIFIED, port))).is_ok();
+    let v6_free = TcpListener::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, port))).is_ok();
+    v4_free && v6_free
 }
 
 /// Check every port in `ports`, returning the names/ports already occupied.
@@ -53,6 +57,19 @@ mod tests {
     #[test]
     fn a_bound_port_is_reported_occupied() {
         let listener = TcpListener::bind("0.0.0.0:0").expect("should bind an ephemeral port");
+        let port = listener
+            .local_addr()
+            .expect("should have a local addr")
+            .port();
+
+        assert!(!is_port_free(port));
+        drop(listener);
+    }
+
+    #[test]
+    fn a_port_occupied_only_on_ipv6_is_reported_occupied() {
+        let listener = TcpListener::bind(SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)))
+            .expect("should bind an ephemeral IPv6 port");
         let port = listener
             .local_addr()
             .expect("should have a local addr")

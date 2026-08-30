@@ -123,7 +123,14 @@ fn compose_env_from_state(state: &ServerState) -> [(&'static str, String); 4] {
         ),
         (
             "TEMPO_RETENTION_HOURS",
-            (state.retention_days.unwrap_or(30) * 24).to_string(),
+            // Saturate rather than wrap: `configure` already rejects an
+            // overflow-prone value up front, but this also guards a
+            // stale/hand-edited state file predating that check.
+            state
+                .retention_days
+                .unwrap_or(30)
+                .saturating_mul(24)
+                .to_string(),
         ),
     ]
 }
@@ -408,6 +415,13 @@ pub fn open() -> i32 {
 
 /// `telemetry-controller configure --retention-days=N`.
 pub fn configure(retention_days: u32) -> i32 {
+    if retention_days.checked_mul(24).is_none() {
+        eprintln!(
+            "Error: retention_days={retention_days} is too large (overflows hours); choose a smaller value."
+        );
+        return 1;
+    }
+
     let mut state = load_state();
     state.retention_days = Some(retention_days);
 

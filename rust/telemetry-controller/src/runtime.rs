@@ -47,6 +47,7 @@ pub fn resolve_runtime(choice: RuntimeChoice) -> Result<RuntimeKind, String> {
         choice,
         docker_compose_available(),
         cfg!(target_os = "linux"),
+        cfg!(target_arch = "x86_64"),
     )
 }
 
@@ -56,8 +57,13 @@ fn resolve_runtime_with(
     choice: RuntimeChoice,
     docker_available: bool,
     is_linux: bool,
+    is_x86_64: bool,
 ) -> Result<RuntimeKind, String> {
     let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+    // v1 native support is Linux x86-64 only (see module docs); OS alone
+    // isn't sufficient -- e.g. Linux aarch64 must not be treated as
+    // supported here.
+    let native_supported = is_linux && is_x86_64;
     match choice {
         RuntimeChoice::Compose => {
             if docker_available {
@@ -72,7 +78,7 @@ plugin (Linux), then retry."
             }
         }
         RuntimeChoice::Native => {
-            if is_linux {
+            if native_supported {
                 Ok(RuntimeKind::Native)
             } else {
                 Err(format!(
@@ -84,13 +90,13 @@ machine is {os}/{arch}. Use --runtime compose (or --runtime auto) instead."
         RuntimeChoice::Auto => {
             if docker_available {
                 Ok(RuntimeKind::Compose)
-            } else if is_linux {
+            } else if native_supported {
                 Ok(RuntimeKind::Native)
             } else {
                 Err(format!(
                     "No usable runtime found: Docker Compose is unavailable (`docker compose \
-version` failed) and native mode is Linux-only. This machine is {os}/{arch}. Install Docker \
-Desktop to continue."
+version` failed) and native mode is Linux x86-64-only. This machine is {os}/{arch}. Install \
+Docker Desktop to continue."
                 ))
             }
         }
@@ -115,46 +121,59 @@ mod tests {
     #[test]
     fn auto_prefers_compose_when_docker_is_available() {
         assert_eq!(
-            resolve_runtime_with(RuntimeChoice::Auto, true, true),
+            resolve_runtime_with(RuntimeChoice::Auto, true, true, true),
             Ok(RuntimeKind::Compose)
         );
         assert_eq!(
-            resolve_runtime_with(RuntimeChoice::Auto, true, false),
+            resolve_runtime_with(RuntimeChoice::Auto, true, false, true),
             Ok(RuntimeKind::Compose)
         );
     }
 
     #[test]
-    fn auto_falls_back_to_native_on_linux_without_docker() {
+    fn auto_falls_back_to_native_on_linux_x86_64_without_docker() {
         assert_eq!(
-            resolve_runtime_with(RuntimeChoice::Auto, false, true),
+            resolve_runtime_with(RuntimeChoice::Auto, false, true, true),
             Ok(RuntimeKind::Native)
         );
+    }
+
+    #[test]
+    fn auto_does_not_pick_native_on_linux_non_x86_64() {
+        // e.g. Linux aarch64: is_linux is true, but native mode is v1
+        // x86-64-only, so falling back to it here would fail later from
+        // missing artifacts instead of a clear up-front error.
+        assert!(resolve_runtime_with(RuntimeChoice::Auto, false, true, false).is_err());
     }
 
     #[test]
     fn auto_fails_on_non_linux_without_docker() {
-        assert!(resolve_runtime_with(RuntimeChoice::Auto, false, false).is_err());
+        assert!(resolve_runtime_with(RuntimeChoice::Auto, false, false, true).is_err());
     }
 
     #[test]
     fn explicit_compose_fails_without_docker() {
-        assert!(resolve_runtime_with(RuntimeChoice::Compose, false, true).is_err());
+        assert!(resolve_runtime_with(RuntimeChoice::Compose, false, true, true).is_err());
     }
 
     #[test]
     fn explicit_native_fails_on_non_linux() {
-        assert!(resolve_runtime_with(RuntimeChoice::Native, true, false).is_err());
+        assert!(resolve_runtime_with(RuntimeChoice::Native, true, false, true).is_err());
     }
 
     #[test]
-    fn explicit_native_succeeds_on_linux_regardless_of_docker() {
+    fn explicit_native_fails_on_linux_non_x86_64() {
+        assert!(resolve_runtime_with(RuntimeChoice::Native, false, true, false).is_err());
+    }
+
+    #[test]
+    fn explicit_native_succeeds_on_linux_x86_64_regardless_of_docker() {
         assert_eq!(
-            resolve_runtime_with(RuntimeChoice::Native, false, true),
+            resolve_runtime_with(RuntimeChoice::Native, false, true, true),
             Ok(RuntimeKind::Native)
         );
         assert_eq!(
-            resolve_runtime_with(RuntimeChoice::Native, true, true),
+            resolve_runtime_with(RuntimeChoice::Native, true, true, true),
             Ok(RuntimeKind::Native)
         );
     }

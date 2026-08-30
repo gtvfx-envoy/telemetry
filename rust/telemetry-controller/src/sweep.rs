@@ -101,10 +101,12 @@ fn process_one_file(
         return;
     };
     let Ok(payload) = serde_json::from_str::<DroppedPayload>(&contents) else {
-        // Not valid JSON yet (e.g. observed mid-write on an unusual
-        // filesystem) -- leave it for the next pass rather than treating
-        // it as a poison file immediately.
-        outcome.not_ready += 1;
+        // Could be a file caught mid-write (transient) or permanently
+        // malformed content -- track it with the same bounded retry
+        // mechanism used for forwarding failures below, so a permanently
+        // invalid file eventually gets dead-lettered instead of retried
+        // forever and growing the drop directory's backlog indefinitely.
+        record_retry_or_dead_letter(path, max_retries, retry_counts, outcome);
         return;
     };
 
@@ -114,17 +116,27 @@ fn process_one_file(
             retry_counts.remove(path);
             outcome.forwarded += 1;
         }
-        Err(_) => {
-            let count = retry_counts.entry(path.to_path_buf()).or_insert(0);
-            *count += 1;
-            if *count >= max_retries {
-                move_to_dead_letter(path);
-                retry_counts.remove(path);
-                outcome.dead_lettered += 1;
-            } else {
-                outcome.retried += 1;
-            }
-        }
+        Err(_) => record_retry_or_dead_letter(path, max_retries, retry_counts, outcome),
+    }
+}
+
+/// Bump `path`'s retry count and either dead-letter it (once `max_retries`
+/// is reached) or record it as retried this pass. Shared by both the
+/// JSON-parse-failure and forwarding-failure paths in [`process_one_file`].
+fn record_retry_or_dead_letter(
+    path: &Path,
+    max_retries: u32,
+    retry_counts: &mut HashMap<PathBuf, u32>,
+    outcome: &mut SweepOutcome,
+) {
+    let count = retry_counts.entry(path.to_path_buf()).or_insert(0);
+    *count += 1;
+    if *count >= max_retries {
+        move_to_dead_letter(path);
+        retry_counts.remove(path);
+        outcome.dead_lettered += 1;
+    } else {
+        outcome.retried += 1;
     }
 }
 
@@ -313,8 +325,31 @@ mod tests {
         let mut retry_counts = HashMap::new();
         let outcome = sweep_once(drop_dir.path(), endpoint, None, 3, &mut retry_counts);
 
-        assert_eq!(outcome.not_ready, 1);
+        // Tracked via the same bounded retry mechanism as forwarding
+        // failures now (see permanently_invalid_json_is_eventually_dead_lettered),
+        // so a single pass still just retries -- it isn't dead-lettered
+        // immediately.
+        assert_eq!(outcome.retried, 1);
         assert!(drop_dir.path().join("1.json").exists());
+    }
+
+    #[test]
+    fn permanently_invalid_json_is_eventually_dead_lettered() {
+        let endpoint = "http://127.0.0.1:1/v1/traces";
+        let drop_dir = tempdir().expect("tempdir should be created");
+        write_drop_file(drop_dir.path(), "1.json", "not valid json");
+
+        let mut retry_counts = HashMap::new();
+        for _ in 0..2 {
+            let outcome = sweep_once(drop_dir.path(), endpoint, None, 3, &mut retry_counts);
+            assert_eq!(outcome.retried, 1);
+        }
+        let final_outcome = sweep_once(drop_dir.path(), endpoint, None, 3, &mut retry_counts);
+        assert_eq!(final_outcome.dead_lettered, 1);
+
+        let dead_letter_file = drop_dir.path().join(DEAD_LETTER_DIR_NAME).join("1.json");
+        assert!(dead_letter_file.exists());
+        assert!(!drop_dir.path().join("1.json").exists());
     }
 
     #[test]
