@@ -101,4 +101,9 @@ jobs:
         # see `engit publish bundle --help`), and this check only needs to
         # validate the manifest/bundle structure, not real version
         # resolution.
-        run: ${{ github.workspace }}/envoy_utils/rust/target/release/engit publish bundle --dry-run --version dev
+        # --output dist: engit requires an output root (--output or
+        # ENVOY_BUNDLE_PUBLISH_ROOT/ENVOY_BNDLE_PROD) even for --dry-run,
+        # which writes nothing regardless of this value. `dist` matches
+        # the convention already used by envoy's own release workflow
+        # (`engit publish bundle --zip --output dist`).
+        run: ${{ github.workspace }}/envoy_utils/rust/target/release/engit publish bundle --dry-run --version dev --output dist
