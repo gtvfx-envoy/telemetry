@@ -21,6 +21,14 @@ jobs:
 
       - name: Validate docker-compose.yml syntax
         working-directory: compose
+        # docker compose interpolates the whole file up front, including
+        # required (`:?`) env var references (see AGENTS/copilot
+        # instructions) -- so all three must be set here even though this
+        # step never actually starts anything.
+        env:
+          COLLECTOR_BEARER_TOKEN: ci-placeholder-token
+          GRAFANA_ADMIN_PASSWORD: ci-placeholder-password
+          GRAFANA_VIEWER_PASSWORD: ci-placeholder-password
         run: docker compose config --quiet
 
       - name: Validate Collector and Tempo YAML are well-formed
@@ -88,4 +96,9 @@ jobs:
         working-directory: telemetry
         env:
           ENVOY_STUDIO_ARTIFACTS: ${{ github.workspace }}/staged
-        run: ${{ github.workspace }}/envoy_utils/rust/target/release/engit publish bundle --dry-run
+        # --version dev: this repo won't have a semver tag until its first
+        # real release (engit's own documented flag for exactly this --
+        # see `engit publish bundle --help`), and this check only needs to
+        # validate the manifest/bundle structure, not real version
+        # resolution.
+        run: ${{ github.workspace }}/envoy_utils/rust/target/release/engit publish bundle --dry-run --version dev
