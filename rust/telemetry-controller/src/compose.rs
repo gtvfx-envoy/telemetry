@@ -101,10 +101,12 @@ pub fn logs(
     if let Some(service) = service {
         command.arg(service);
     }
-    command
-        .status()
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    let status = command.status().map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("command exited with status {status}"))
+    }
 }
 
 fn run_checked(mut command: Command) -> Result<(), String> {
