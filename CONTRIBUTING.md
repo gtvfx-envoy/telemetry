@@ -86,7 +86,7 @@ and wires up credentials for you:
 ```bash
 # Must run somewhere `docker compose` is actually on PATH (native
 # Linux/macOS, or inside your WSL2 distro on Windows).
-./rust/target/release/telemetry-controller start --runtime compose
+cd rust && cargo run --release -p telemetry-controller -- start --runtime compose
 ```
 
 This builds the sweep image (`--build` is always applied -- see the
