@@ -27,7 +27,7 @@ few of the steps below rather than duplicating it.
 ## Building and testing the Rust workspace
 
 From `rust/` (the workspace root, independent from `envoy`/`envoy-cli`'s own
-workspace -- see `copilot-instructions.md`):
+workspace -- see `.github/copilot-instructions.md`):
 
 ```bash
 cd rust
