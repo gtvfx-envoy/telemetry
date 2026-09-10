@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Locally-built native runtime artifacts (Linux telemetry-controller binary
+# for the sweep's Docker build context, or Grafana/Tempo/Collector native
+# binaries) -- never vendored into the repo; staged by CI/publish or built
+# locally for dev/testing (see .envoy/publish-manifest.yaml,
+# compose/sweep/Dockerfile).
+/native/
