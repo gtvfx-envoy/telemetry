@@ -112,7 +112,8 @@ for details and `VERSIONS.lock` for exact pinned versions/checksums.
 license compliance (Grafana's AGPL) and whoever owns
 employee-monitoring/privacy policy (this dashboard aggregates every
 workstation's usage) -- both are policy decisions, not just technical
-ones.
+ones. See `PILOT_CHECKLIST.md` for a step-by-step checklist covering this
+and the rest of a first small studio pilot rollout.
 
 ## Repository layout
 
@@ -126,3 +127,8 @@ ones.
   artifact staging for `engit publish bundle`).
 - `VERSIONS.lock`, `THIRD_PARTY_LICENSES/` -- pinned versions and license
   inventory for every bundled third-party service.
+
+## Contributing
+
+Building/testing the Rust workspace, running the full stack locally for
+development, and troubleshooting the common gotchas: see `CONTRIBUTING.md`.
