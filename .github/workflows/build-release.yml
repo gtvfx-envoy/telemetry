@@ -161,13 +161,34 @@ jobs:
           [[ -n "$engit" ]] || { echo "::error::Engit was not found in the release archive"; exit 1; }
           echo "$(dirname "$engit")" >> "$GITHUB_PATH"
 
-      - name: Publish versioned bundle archive
+      - name: Publish versioned bundle directory
         env:
           ENVOY_STUDIO_ARTIFACTS: ${{ github.workspace }}/staged
         run: >-
           engit publish bundle "${GITHUB_WORKSPACE}"
           --output "${GITHUB_WORKSPACE}/dist"
-          --version "${RELEASE_VERSION}" --zip
+          --version "${RELEASE_VERSION}"
+
+      - name: Create permission-preserving bundle archive
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+
+          version = os.environ["RELEASE_VERSION"]
+          dist = Path("dist")
+          bundle_root = dist / "telemetry" / version
+          if not bundle_root.is_dir():
+              raise SystemExit(f"Published bundle directory is missing: {bundle_root}")
+
+          archive = dist / f"telemetry-{version}.zip"
+          with ZipFile(archive, "w", compression=ZIP_DEFLATED) as zip_file:
+              for path in sorted(bundle_root.rglob("*")):
+                  if path.is_file():
+                      zip_file.write(path, path.relative_to(dist))
+          PY
 
       - name: Verify bundle contents
         shell: bash
@@ -183,6 +204,18 @@ jobs:
             bin/macos-aarch64/telemetry-controller; do
             grep -F "/$required" <<< "$listing" >/dev/null || {
               echo "::error::Bundle archive is missing $required"
+              exit 1
+            }
+          done
+          extraction_root="$(mktemp -d "${RUNNER_TEMP}/telemetry-bundle.XXXXXX")"
+          unzip -q "$archive" -d "$extraction_root"
+          bundle_root="$extraction_root/telemetry/${RELEASE_VERSION}"
+          for controller in \
+            bin/linux-x86_64/telemetry-controller \
+            bin/macos-x86_64/telemetry-controller \
+            bin/macos-aarch64/telemetry-controller; do
+            [[ -x "$bundle_root/$controller" ]] || {
+              echo "::error::Extracted controller is not executable: $controller"
               exit 1
             }
           done

@@ -27,6 +27,16 @@ if [[ -e "$STATE_ROOT" ]]; then
     exit 1
 fi
 
+compose_label="label=com.docker.compose.project=$COMPOSE_PROJECT_NAME"
+existing_containers=$(docker container ls --all --quiet --filter "$compose_label")
+existing_volumes=$(docker volume ls --quiet --filter "$compose_label")
+existing_networks=$(docker network ls --quiet --filter "$compose_label")
+if [[ -n "$existing_containers" || -n "$existing_volumes" || -n "$existing_networks" ]]; then
+    echo "Smoke-test Compose project already owns Docker resources: $COMPOSE_PROJECT_NAME" >&2
+    echo "Choose a fresh COMPOSE_PROJECT_NAME; existing resources were left untouched." >&2
+    exit 1
+fi
+
 mkdir -p "$STATE_ROOT" "$DROP_PATH"
 
 readStateField() {

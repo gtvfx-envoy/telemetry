@@ -34,26 +34,42 @@ pub fn persistent_volumes_exist(compose_file: &Path) -> Result<bool, String> {
 }
 
 fn compose_project_name(compose_file: &Path) -> Result<String, String> {
-    if let Ok(project_name) = std::env::var("COMPOSE_PROJECT_NAME") {
-        if !project_name.is_empty() {
-            return Ok(project_name);
-        }
+    let compose_directory = compose_file.parent().ok_or_else(|| {
+        format!(
+            "could not locate the parent directory for {}",
+            compose_file.display()
+        )
+    })?;
+    let tempo_config_dir = compose_directory
+        .join("tempo")
+        .to_string_lossy()
+        .into_owned();
+    let interpolation_env = [
+        ("COLLECTOR_BEARER_TOKEN", "project-name-lookup".to_string()),
+        ("GRAFANA_ADMIN_PASSWORD", "project-name-lookup".to_string()),
+        ("GRAFANA_VIEWER_PASSWORD", "project-name-lookup".to_string()),
+        ("TEMPO_CONFIG_DIR", tempo_config_dir),
+    ];
+    let mut command = compose_command(compose_file, &interpolation_env);
+    command
+        .args(["config", "--format", "json"])
+        .stdout(Stdio::piped());
+    let output = command.output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
     }
-    default_compose_project_name(compose_file)
+    project_name_from_config_json(&output.stdout)
 }
 
-fn default_compose_project_name(compose_file: &Path) -> Result<String, String> {
-    compose_file
-        .parent()
-        .and_then(Path::file_name)
-        .and_then(|name| name.to_str())
-        .map(str::to_lowercase)
-        .ok_or_else(|| {
-            format!(
-                "could not derive a Docker Compose project name from {}",
-                compose_file.display()
-            )
-        })
+fn project_name_from_config_json(output: &[u8]) -> Result<String, String> {
+    let config: Value = serde_json::from_slice(output)
+        .map_err(|error| format!("failed to parse Docker Compose configuration: {error}"))?;
+    config
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "Docker Compose configuration did not report a project name".to_string())
 }
 
 /// Locate the bundle's `docker-compose.yml`, searching upward from the
@@ -276,11 +292,20 @@ mod tests {
     }
 
     #[test]
-    fn derives_default_project_name_from_compose_directory() {
-        let compose_file = Path::new("/srv/Telemetry/compose/docker-compose.yml");
+    fn reads_project_name_from_compose_configuration() {
         assert_eq!(
-            default_compose_project_name(compose_file),
-            Ok("compose".to_string())
+            project_name_from_config_json(br#"{"name":"telemetry-prod","services":{}}"#),
+            Ok("telemetry-prod".to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_compose_configuration_without_a_project_name() {
+        let error = project_name_from_config_json(br#"{"services":{}}"#)
+            .expect_err("missing project name should fail closed");
+        assert_eq!(
+            error,
+            "Docker Compose configuration did not report a project name"
         );
     }
 

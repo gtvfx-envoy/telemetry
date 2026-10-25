@@ -1,11 +1,11 @@
 {
     "schema_version": 2,
-    "commit": "a7803bf6cf76cfd2bd91db3fae43b1e71b054774",
-    "indexed_at": "2026-10-23T15:45:20Z",
+    "commit": "18e7236c50ea0c6c74cb5f941db262485681a0a3",
+    "indexed_at": "2026-10-25T14:12:58Z",
     "project": "gtvfx-envoy-telemetry",
-    "nodes": 471,
-    "edges": 1036,
+    "nodes": 476,
+    "edges": 1047,
     "original_size": 2818048,
-    "compressed_size": 416300,
+    "compressed_size": 419602,
     "compression_level": 3
 }

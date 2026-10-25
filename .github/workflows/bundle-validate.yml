@@ -131,6 +131,24 @@ jobs:
             rust:1.97.0-bookworm@sha256:8fa55b2f3ddf97471ab6a767bfa3f37e6bad0986ba823e75fea57e2a2a5c3073 \
             sh -c 'cargo build --locked --release -p telemetry-controller && cp /target/release/telemetry-controller /output/'
 
+      - name: Verify smoke test preserves pre-existing project resources
+        env:
+          COMPOSE_PROJECT_NAME: telemetry-safety-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          volume_name="${COMPOSE_PROJECT_NAME}-sentinel"
+          docker volume create \
+            --label "com.docker.compose.project=${COMPOSE_PROJECT_NAME}" \
+            "$volume_name" >/dev/null
+          trap 'docker volume rm "$volume_name" >/dev/null' EXIT
+
+          if bash scripts/smoke-compose.sh \
+            "${GITHUB_WORKSPACE}/bin/linux-x86_64/telemetry-controller" \
+            "${RUNNER_TEMP}/telemetry-safety-state"; then
+            echo "::error::Smoke test accepted a Compose project with existing resources"
+            exit 1
+          fi
+          docker volume inspect "$volume_name" >/dev/null
+
       - name: Run Compose smoke test
         env:
           COMPOSE_PROJECT_NAME: telemetry-ci-${{ github.run_id }}-${{ github.run_attempt }}
