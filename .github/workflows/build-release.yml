@@ -1,17 +1,50 @@
-name: Build release binaries
+name: Build and release telemetry bundle
 
 on:
   push:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: Version label for a validation bundle
+        required: true
+        default: dev
 
 permissions:
   contents: read
 
+env:
+  RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || github.ref_name }}
+  ENGIT_VERSION: "0.3.0"
+  ENGIT_LINUX_SHA256: "412695dfbf427986875b34330478ff50b4a76fa6fee6a5ba82d50406c246d919"
+
 jobs:
+  verify-version:
+    name: Verify release version
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check workspace version against release tag
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          workspace_version="$(python3 -c 'import tomllib; print(tomllib.load(open("rust/Cargo.toml", "rb"))["workspace"]["package"]["version"])')"
+          if [[ ! "$RELEASE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tag must be semantic and start with v: $RELEASE_VERSION"
+            exit 1
+          fi
+          if [[ "${RELEASE_VERSION#v}" != "$workspace_version" ]]; then
+            echo "::error::Tag $RELEASE_VERSION does not match Cargo workspace version $workspace_version."
+            exit 1
+          fi
+
   build:
     name: Build (${{ matrix.target_name }})
+    needs: verify-version
     strategy:
       fail-fast: false
       matrix:
@@ -23,17 +56,10 @@ jobs:
           - runner: ubuntu-24.04
             target_name: linux-x86_64
             binary_name: telemetry-controller
-            # Build inside a container matching the sweep service's own
-            # runtime base image (debian:bookworm-slim, see
-            # compose/sweep/Dockerfile), not directly on the ubuntu-24.04
-            # runner. A binary built against a newer host glibc (Ubuntu
-            # 24.04 ships 2.39) fails to even start inside bookworm-slim
-            # (glibc 2.36) with "version `GLIBC_2.39' not found" --
-            # confirmed directly during live end-to-end testing. This
-            # must stay in sync with the base image tag in
-            # compose/sweep/Dockerfile and the pinned version in
-            # VERSIONS.lock.
-            container: "rust:1-bookworm"
+            # The sweep image runs Debian Bookworm. Build in the same
+            # glibc generation so Ubuntu 24.04 cannot produce a binary
+            # that requires a newer glibc than the runtime image provides.
+            container: "rust:1.97.0-bookworm@sha256:8fa55b2f3ddf97471ab6a767bfa3f37e6bad0986ba823e75fea57e2a2a5c3073"
           - runner: macos-15-intel
             target_name: macos-x86_64
             binary_name: telemetry-controller
@@ -47,26 +73,143 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Install stable Rust toolchain
-        # Skipped when running inside the rust:1-bookworm container, which
-        # already has a stable toolchain preinstalled.
+      - name: Install pinned Rust toolchain
+        # Skipped when running inside the pinned Rust container, which
+        # already has the required toolchain preinstalled.
         if: matrix.container == ''
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
+        with:
+          toolchain: 1.97.0
 
-      - name: Cache cargo registry/build artifacts
-        uses: Swatinem/rust-cache@v2
+      - name: Cache cargo registry and build artifacts
+        uses: Swatinem/rust-cache@e9d7b9f1e587218970671bac74e5511ed9506e6a # v2
         with:
           workspaces: rust
 
       - name: Build release binary
         working-directory: rust
-        run: cargo build --release -p telemetry-controller
+        run: cargo build --locked --release -p telemetry-controller
 
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload controller binary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: telemetry-controller-${{ matrix.target_name }}
+          name: controller-${{ matrix.target_name }}
           path: rust/target/release/${{ matrix.binary_name }}
           if-no-files-found: error
+
+  package-bundle:
+    name: Package checksummed bundle
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Download Windows controller
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: controller-windows-x86_64
+          path: staged/telemetry/controller/windows-x86_64
+
+      - name: Download Linux controller
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: controller-linux-x86_64
+          path: staged/telemetry/controller/linux-x86_64
+
+      - name: Download Intel macOS controller
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: controller-macos-x86_64
+          path: staged/telemetry/controller/macos-x86_64
+
+      - name: Download Apple silicon controller
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: controller-macos-aarch64
+          path: staged/telemetry/controller/macos-aarch64
+
+      - name: Restore Unix executable permissions
+        run: chmod +x staged/telemetry/controller/{linux-x86_64,macos-x86_64,macos-aarch64}/telemetry-controller
+
+      - name: Install checksummed Engit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          asset="envoy_utils-v${ENGIT_VERSION}-linux-x86_64-musl.tar.gz"
+          release_directory="${RUNNER_TEMP}/engit-v${ENGIT_VERSION}"
+          mkdir -p "$release_directory/bundle"
+          gh release download "v${ENGIT_VERSION}" \
+            --repo gtvfx-envoy/envoy_utils \
+            --pattern "$asset" \
+            --dir "$release_directory"
+          actual="$(sha256sum "$release_directory/$asset" | awk '{print $1}')"
+          [[ "$actual" == "$ENGIT_LINUX_SHA256" ]] || {
+            echo "::error::Engit checksum mismatch: expected $ENGIT_LINUX_SHA256, got $actual"
+            exit 1
+          }
+          tar -xzf "$release_directory/$asset" -C "$release_directory/bundle"
+          engit="$(find "$release_directory/bundle" -type f -name engit -print -quit)"
+          [[ -n "$engit" ]] || { echo "::error::Engit was not found in the release archive"; exit 1; }
+          echo "$(dirname "$engit")" >> "$GITHUB_PATH"
+
+      - name: Publish versioned bundle archive
+        env:
+          ENVOY_STUDIO_ARTIFACTS: ${{ github.workspace }}/staged
+        run: >-
+          engit publish bundle "${GITHUB_WORKSPACE}"
+          --output "${GITHUB_WORKSPACE}/dist"
+          --version "${RELEASE_VERSION}" --zip
+
+      - name: Verify bundle contents
+        shell: bash
+        run: |
+          archive="$(find dist -maxdepth 1 -type f -name '*.zip' -print -quit)"
+          [[ -n "$archive" ]] || { echo "::error::No bundle archive was produced"; exit 1; }
+          listing="$(unzip -Z1 "$archive")"
+          for required in \
+            compose/docker-compose.yml \
+            bin/windows-x86_64/telemetry-controller.exe \
+            bin/linux-x86_64/telemetry-controller \
+            bin/macos-x86_64/telemetry-controller \
+            bin/macos-aarch64/telemetry-controller; do
+            grep -F "/$required" <<< "$listing" >/dev/null || {
+              echo "::error::Bundle archive is missing $required"
+              exit 1
+            }
+          done
+
+      - name: Create SHA-256 manifest
+        working-directory: dist
+        run: find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' | sort -z | xargs -0 sha256sum > SHA256SUMS
+
+      - name: Upload validation bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: telemetry-bundle-${{ env.RELEASE_VERSION }}
+          path: |
+            dist/*.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          body: |
+            Compose-only Envoy telemetry server bundle for Windows, Linux,
+            and macOS controller hosts. The server requires Docker with the
+            Compose plugin. Release assets are checksummed but unsigned.

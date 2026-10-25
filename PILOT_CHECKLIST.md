@@ -21,17 +21,14 @@ checklist only sequences and cross-references it.
       resolve for you -- do this before real usage data from real
       workstations starts flowing anywhere, even for a small pilot.
 - [ ] **Pick the pilot server.** One machine (or a small number), reachable
-      over the studio network by every pilot workstation, with Docker + the
-      Compose plugin available (or a Linux x86-64 host if you'd rather use
-      the Docker-free native runtime -- see `README.md`'s Runtimes table).
+      over the studio network by every pilot workstation, with Docker and
+      the Compose plugin available.
 
 ### Known limitations acceptable for a pilot (not a full release)
 
-- `VERSIONS.lock`'s image/artifact **digests** are still
-  `TODO: resolve at publish time` placeholders. This is fine for a pilot --
-  every image is still pinned to a specific real version tag (never
-  `:latest`), just not yet hardened to an immutable digest. Resolve these
-  before a wider studio-wide rollout.
+- Container images and the Linux release-builder image are pinned to
+  immutable registry digests in `VERSIONS.lock`; update the ledger and the
+  corresponding Compose/workflow references together when upgrading them.
 - There's **no tagged release yet**. A pilot runs from a locally-built
   controller binary (or an `engit publish bundle --dry-run`-validated
   layout) rather than a real `engit publish bundle` artifact. Fine for a
@@ -44,14 +41,14 @@ checklist only sequences and cross-references it.
 1. Follow `README.md`'s "Server setup" section to install/register the
    bundle, then run:
    ```text
-   envoy telemetry start [--runtime auto|compose|native]
+   envoy telemetry start [--runtime auto|compose]
    ```
 2. Confirm the studio network can actually reach the server on the ports
    that matter: **4318** (Collector, direct OTLP/HTTP) and **3000**
    (Grafana). Tempo is deliberately never exposed -- don't open it up.
 3. Record the generated `studio-viewer` Grafana password somewhere your
-   pilot participants can find it (it's also always recoverable later via
-   `envoy telemetry status`).
+   pilot participants can find it (it's also recoverable later via
+   `envoy telemetry status --show-credentials`).
 4. Check the default 30-day retention is acceptable for the pilot, or
    adjust with `envoy telemetry configure --retention-days=N`.
 
@@ -85,6 +82,5 @@ checklist only sequences and cross-references it.
 
 - Gather feedback from pilot participants.
 - Decide go/no-go for a wider studio rollout.
-- Before a wider rollout (or any tagged release): resolve `VERSIONS.lock`'s
-  outstanding digest placeholders and cut a real semver tag -- both
-  deliberately out of scope for this pilot.
+- Before a wider rollout, cut and validate a real semver release so operators
+  are not expected to build the controller locally.

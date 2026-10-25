@@ -11,8 +11,9 @@ few of the steps below rather than duplicating it.
 
 ## Prerequisites
 
-- **Rust** (stable toolchain, with `rustfmt` and `clippy` components) --
-  builds and tests `rust/telemetry-controller` on any platform.
+- **Rust 1.97.0** (with `rustfmt` and `clippy` components) -- builds and
+  tests `rust/telemetry-controller` on any platform. The exact toolchain is
+  declared in `rust/rust-toolchain.toml`.
 - **Docker + the Compose plugin** -- to run the Collector/Tempo/Grafana/sweep
   stack locally.
   - Linux/macOS: install Docker normally; `docker` and `docker compose`
@@ -32,13 +33,27 @@ workspace -- see `.github/copilot-instructions.md`):
 ```bash
 cd rust
 cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
 ```
 
 All three must be clean before opening a PR (this mirrors
 `.github/workflows/lint.yml` exactly, which runs the same three commands on
 Linux, Windows, and macOS).
+
+After staging the Linux release binary as described below, run the same
+end-to-end Compose smoke test used by CI:
+
+```bash
+COMPOSE_PROJECT_NAME=telemetry-local-smoke \
+  bash scripts/smoke-compose.sh ./bin/linux-x86_64/telemetry-controller \
+  ./bin/local-smoke-state ./bin/local-smoke-drop
+```
+
+Use a fresh state path each run. The script verifies authentication, direct
+OTLP ingestion, querying the trace back through Grafana and Tempo, and the
+file-drop sweep. Its isolated Compose project and volumes are removed on
+exit; the ignored state directory is retained for inspection.
 
 ## Running the full stack locally
 
@@ -51,7 +66,7 @@ yourself once:
 ### 1. Build the Linux binary
 
 **This must be built inside a container matching the sweep image's own base
-(`rust:1-bookworm`, for `debian:bookworm-slim`), not with your host's own
+(`rust:1.97.0-bookworm`, for `debian:bookworm-slim`), not with your host's own
 Rust toolchain.** A binary built against a newer host glibc (e.g. Ubuntu
 24.04+, glibc 2.39) fails to even start inside `debian:bookworm-slim` (glibc
 2.36) with `` version `GLIBC_2.39' not found ``. This bites Linux hosts and
@@ -60,8 +75,9 @@ native Linux dev machine.
 
 ```bash
 # From the repository root:
-docker run --rm -v "$(pwd)/rust:/workspace" -w /workspace rust:1-bookworm \
-  cargo build --release -p telemetry-controller
+docker run --rm -v "$(pwd)/rust:/workspace" -w /workspace \
+  rust:1.97.0-bookworm@sha256:8fa55b2f3ddf97471ab6a767bfa3f37e6bad0986ba823e75fea57e2a2a5c3073 \
+  cargo build --locked --release -p telemetry-controller
 ```
 
 On Windows without Docker Desktop, prefix this with your WSL2 distro
@@ -71,12 +87,12 @@ below).
 ### 2. Stage it where the sweep's build context expects it
 
 ```bash
-mkdir -p native
-cp rust/target/release/telemetry-controller native/telemetry-controller
+mkdir -p bin/linux-x86_64
+cp rust/target/release/telemetry-controller bin/linux-x86_64/telemetry-controller
 ```
 
-`native/` is gitignored -- it's a local (or CI-staged) build artifact, never
-committed source (see `.envoy/publish-manifest.yaml`).
+`bin/` is gitignored -- it contains local (or CI-staged) build artifacts,
+never committed source (see `.envoy/publish-manifest.yaml`).
 
 ### 3. Start the stack
 
@@ -86,14 +102,14 @@ and wires up credentials for you:
 ```bash
 # Must run somewhere `docker compose` is actually on PATH (native
 # Linux/macOS, or inside your WSL2 distro on Windows).
-cd rust && cargo run --release -p telemetry-controller -- start --runtime compose
+cd rust && cargo run --locked --release -p telemetry-controller -- start --runtime compose
 ```
 
 This builds the sweep image (`--build` is always applied -- see the
 comment on `compose::up()` for why that's load-bearing, not cosmetic),
 starts all four services, and prints the generated shared `studio-viewer`
-Grafana password. `telemetry-controller status` reprints it later if you
-lose it.
+Grafana and Collector credentials. Use `telemetry-controller status
+--show-credentials` to recover them from an operator-controlled terminal.
 
 ### 4. Verify it's actually working
 
@@ -175,8 +191,8 @@ Without Docker Desktop, run every Docker-touching command through
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Sweep image fails to build: context/binary not found | `native/telemetry-controller` doesn't exist yet | Build it first (see step 1-2 above) |
-| Container fails with `` version `GLIBC_2.39' not found `` | Binary built with a newer host glibc than `debian:bookworm-slim` ships | Always build inside `rust:1-bookworm` (step 1), never with your host toolchain |
+| Sweep image fails to build: context/binary not found | `bin/linux-x86_64/telemetry-controller` doesn't exist yet | Build it first (see step 1-2 above) |
+| Container fails with `` version `GLIBC_2.39' not found `` | Binary built with a newer host glibc than `debian:bookworm-slim` ships | Always build inside the pinned `rust:1.97.0-bookworm` image (step 1), never with your host toolchain |
 | `docker compose down`/`logs`/`ps` fail with "variable ... is missing a value" | Those subcommands also interpolate the compose file's required env vars, even though they don't use the values | Always go through `telemetry-controller`, which supplies them automatically; don't invoke `docker compose` directly with a partial environment |
 | Sweep retries every file forever / everything ends up dead-lettered | Sweep container has no access to the host's controller state file | Confirm `COLLECTOR_BEARER_TOKEN` is actually set in the sweep service's environment (docker-compose.yml wires this explicitly -- don't remove it) |
 | Grafana admin login locks out after a few tries right after `start` | Grafana applies `GF_SECURITY_ADMIN_PASSWORD` before its HTTP server is ready; hitting it too early then retrying repeats a genuine 401 into Grafana's brute-force lockout | Wait for `/api/health` (unauthenticated) before any authenticated call; `telemetry-controller start` already does this for its own provisioning -- don't add your own tighter retry loop against an authenticated endpoint |
@@ -194,4 +210,20 @@ Without Docker Desktop, run every Docker-touching command through
 
 See `README.md`'s own "Repository layout" section for more detail. Update
 `VERSIONS.lock` and `THIRD_PARTY_LICENSES/README.md` together, in the same
-change, whenever a bundled image/artifact version changes.
+change, whenever a bundled image version changes.
+
+## Cutting a release
+
+1. Set `workspace.package.version` in `rust/Cargo.toml` to the intended
+   semantic version and regenerate `rust/Cargo.lock` if needed.
+2. Merge the release-readiness change only after the lint, bundle validation,
+   and Compose smoke workflows pass on `main`.
+3. Create and push an annotated tag whose value exactly matches the workspace
+   version with a `v` prefix, for example `v0.1.0`.
+
+The tag triggers `.github/workflows/build-release.yml`. It rebuilds all four
+controller binaries with the pinned toolchain, publishes a cross-platform
+bundle with the checksummed Engit version in `VERSIONS.lock`, verifies the
+archive layout, writes `SHA256SUMS`, and creates the GitHub Release. A manual
+workflow dispatch performs the same build and packaging steps but uploads only
+a validation artifact and never creates a GitHub Release.

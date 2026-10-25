@@ -50,6 +50,18 @@ pub fn server_state_dir() -> PathBuf {
     config_root().join("telemetry-server")
 }
 
+/// Mutable Tempo configuration used by the running server.
+///
+/// The published bundle is immutable and replaceable during upgrades, so
+/// operator configuration must live beside controller state instead.
+pub fn tempo_config_dir() -> PathBuf {
+    server_state_dir().join("runtime")
+}
+
+pub fn tempo_config_path() -> PathBuf {
+    tempo_config_dir().join("tempo.yaml")
+}
+
 #[cfg(test)]
 mod tests {
     use std::ffi::OsString;
@@ -115,6 +127,21 @@ mod tests {
         assert_eq!(
             server_state_dir(),
             PathBuf::from("custom-root").join("telemetry-server")
+        );
+    }
+
+    #[test]
+    fn tempo_config_is_nested_under_server_state_directory() {
+        let _lock = TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let _guard = EnvVarGuard::set(CONFIG_ROOT_VAR, "custom-root");
+        assert_eq!(
+            tempo_config_path(),
+            PathBuf::from("custom-root")
+                .join("telemetry-server")
+                .join("runtime")
+                .join("tempo.yaml")
         );
     }
 

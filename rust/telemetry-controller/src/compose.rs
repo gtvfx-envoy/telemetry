@@ -8,6 +8,54 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use serde_json::Value;
+
+const REQUIRED_SERVICES: [&str; 4] = ["collector", "tempo", "grafana", "sweep"];
+
+/// Return whether Docker already has persistent volumes for this Compose
+/// project.
+///
+/// A missing controller state file combined with retained Grafana data is not
+/// a fresh installation: Grafana keeps the old admin password in its database
+/// and ignores a newly generated `GF_SECURITY_ADMIN_PASSWORD`. Detect that
+/// situation before startup so the operator can restore state instead of
+/// receiving credentials that cannot unlock the retained deployment.
+pub fn persistent_volumes_exist(compose_file: &Path) -> Result<bool, String> {
+    let project_name = compose_project_name(compose_file)?;
+    let label_filter = format!("label=com.docker.compose.project={project_name}");
+    let output = Command::new("docker")
+        .args(["volume", "ls", "--quiet", "--filter", &label_filter])
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    }
+    Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
+}
+
+fn compose_project_name(compose_file: &Path) -> Result<String, String> {
+    if let Ok(project_name) = std::env::var("COMPOSE_PROJECT_NAME") {
+        if !project_name.is_empty() {
+            return Ok(project_name);
+        }
+    }
+    default_compose_project_name(compose_file)
+}
+
+fn default_compose_project_name(compose_file: &Path) -> Result<String, String> {
+    compose_file
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .map(str::to_lowercase)
+        .ok_or_else(|| {
+            format!(
+                "could not derive a Docker Compose project name from {}",
+                compose_file.display()
+            )
+        })
+}
+
 /// Locate the bundle's `docker-compose.yml`, searching upward from the
 /// running controller binary's own location (the bundle ships the compose
 /// file alongside the controller binaries).
@@ -87,6 +135,56 @@ pub fn ps_json(compose_file: &Path, env: &[(&str, String)]) -> Result<String, St
         return Err(String::from_utf8_lossy(&output.stderr).into_owned());
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Return whether every required Compose service is running and, when a
+/// health status is present, healthy.
+pub fn required_services_running(
+    compose_file: &Path,
+    env: &[(&str, String)],
+) -> Result<bool, String> {
+    let output = ps_json(compose_file, env)?;
+    required_services_running_from_json(&output)
+}
+
+fn required_services_running_from_json(output: &str) -> Result<bool, String> {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return Ok(false);
+    }
+
+    let records = if trimmed.starts_with('[') {
+        serde_json::from_str::<Vec<Value>>(trimmed)
+            .map_err(|error| format!("failed to parse Docker Compose status: {error}"))?
+    } else {
+        trimmed
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str::<Value>(line)
+                    .map_err(|error| format!("failed to parse Docker Compose status: {error}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    Ok(REQUIRED_SERVICES.iter().all(|required_service| {
+        records.iter().any(|record| {
+            let service = json_string(record, "Service", "service");
+            let state = json_string(record, "State", "state");
+            let health = json_string(record, "Health", "health");
+            service == Some(*required_service)
+                && state.is_some_and(|value| value.eq_ignore_ascii_case("running"))
+                && health
+                    .is_none_or(|value| value.is_empty() || value.eq_ignore_ascii_case("healthy"))
+        })
+    }))
+}
+
+fn json_string<'a>(record: &'a Value, primary_key: &str, fallback_key: &str) -> Option<&'a str> {
+    record
+        .get(primary_key)
+        .or_else(|| record.get(fallback_key))
+        .and_then(Value::as_str)
 }
 
 /// `docker compose logs [SERVICE]`, streamed directly to this process's own
@@ -175,5 +273,58 @@ mod tests {
         fs::create_dir_all(fake_exe.parent().unwrap()).expect("dir should be created");
 
         assert!(find_compose_file_from(&fake_exe).is_none());
+    }
+
+    #[test]
+    fn derives_default_project_name_from_compose_directory() {
+        let compose_file = Path::new("/srv/Telemetry/compose/docker-compose.yml");
+        assert_eq!(
+            default_compose_project_name(compose_file),
+            Ok("compose".to_string())
+        );
+    }
+
+    #[test]
+    fn status_requires_every_service_to_be_running() {
+        let output = r#"[
+            {"Service":"collector","State":"running"},
+            {"Service":"tempo","State":"running"},
+            {"Service":"grafana","State":"running"},
+            {"Service":"sweep","State":"running"}
+        ]"#;
+
+        assert_eq!(required_services_running_from_json(output), Ok(true));
+    }
+
+    #[test]
+    fn status_rejects_missing_or_stopped_services() {
+        let missing = r#"[
+            {"Service":"collector","State":"running"},
+            {"Service":"tempo","State":"running"},
+            {"Service":"grafana","State":"running"}
+        ]"#;
+        let stopped = r#"[
+            {"Service":"collector","State":"running"},
+            {"Service":"tempo","State":"exited"},
+            {"Service":"grafana","State":"running"},
+            {"Service":"sweep","State":"running"}
+        ]"#;
+
+        assert_eq!(required_services_running_from_json(missing), Ok(false));
+        assert_eq!(required_services_running_from_json(stopped), Ok(false));
+    }
+
+    #[test]
+    fn status_supports_newline_delimited_json_and_health() {
+        let healthy = concat!(
+            "{\"service\":\"collector\",\"state\":\"running\"}\n",
+            "{\"service\":\"tempo\",\"state\":\"running\"}\n",
+            "{\"service\":\"grafana\",\"state\":\"running\",\"health\":\"healthy\"}\n",
+            "{\"service\":\"sweep\",\"state\":\"running\"}\n"
+        );
+        let unhealthy = healthy.replace("\"healthy\"", "\"unhealthy\"");
+
+        assert_eq!(required_services_running_from_json(healthy), Ok(true));
+        assert_eq!(required_services_running_from_json(&unhealthy), Ok(false));
     }
 }

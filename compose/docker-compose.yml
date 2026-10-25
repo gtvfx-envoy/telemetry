@@ -6,8 +6,8 @@
 # the studio's own `gt/envoy` bundle's `global_env.json`) and envoy's
 # built-in exporter; they never need Docker.
 #
-# Image versions are pinned to specific tags (see ../VERSIONS.lock for the
-# full version/digest ledger) -- never `latest`.
+# Image versions are pinned to immutable registry digests (see
+# ../VERSIONS.lock for the full version/digest ledger) -- never `latest`.
 #
 # Lifecycle is managed by `telemetry-controller` (`envoy telemetry
 # start|stop|status|logs|open|configure`), not by running `docker compose`
@@ -16,7 +16,7 @@
 
 services:
   collector:
-    image: otel/opentelemetry-collector-contrib:0.159.0
+    image: otel/opentelemetry-collector-contrib:0.159.0@sha256:1f2c54a30e713fac6b3ae77a1ec84010c2007e29ced8ec666214fc2f6739c1cc
     restart: unless-stopped
     command: ["--config=/etc/otelcol/otel-collector-config.yaml"]
     volumes:
@@ -50,14 +50,17 @@ services:
       - telemetry
 
   tempo:
-    image: grafana/tempo:3.0.3
+    image: grafana/tempo:3.0.3@sha256:0296560ac66f8a3600d7fb3014a52c189d4d9c3549ad6ff441bf2409855d68d5
     restart: unless-stopped
     command: ["-config.file=/etc/tempo/tempo.yaml"]
     volumes:
-      - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - type: bind
+        source: ${TEMPO_CONFIG_DIR:?telemetry-controller must set this}
+        target: /etc/tempo
+        read_only: true
+        bind:
+          create_host_path: false
       - tempo-data:/var/tempo
-    environment:
-      - TEMPO_RETENTION_HOURS=${TEMPO_RETENTION_HOURS:-720}
     # Deliberately no `ports:` mapping -- Tempo is never network-exposed
     # directly, only reachable by sibling containers (Collector, Grafana)
     # over the internal Compose network.
@@ -65,7 +68,7 @@ services:
       - telemetry
 
   grafana:
-    image: grafana/grafana:13.0.6
+    image: grafana/grafana:13.0.6@sha256:035dfe16f7a3a109b54f2ac032232b07d069aa732156480555b2391fc0a32813
     restart: unless-stopped
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
@@ -97,8 +100,8 @@ services:
 
   sweep:
     build:
-      context: ../native
-      dockerfile: ../compose/sweep/Dockerfile
+      context: ../bin/linux-x86_64
+      dockerfile: ../../compose/sweep/Dockerfile
     restart: unless-stopped
     command:
       - "sweep"

@@ -9,10 +9,6 @@
 #   (.github/workflows/build-release.yml) for the same 4 platforms
 #   envoy-cli's own release matrix covers, then staged here before
 #   `engit publish bundle` runs.
-# - Native Linux x86-64 Grafana/Tempo/Collector artifacts are fetched
-#   from each project's own upstream release and staged the same way, for
-#   operators who prefer not to run Docker on the server (see
-#   VERSIONS.lock for the exact pinned versions/checksums).
 # - Upstream license/notice text lives directly under THIRD_PARTY_LICENSES/
 #   in this repo (small, stable text files) rather than being staged like
 #   the compiled artifacts above, so it ships in every publish
@@ -26,10 +22,17 @@
 # `compose/**` isn't one of engit's default runtime include globs (unlike
 # `.envoy/**`, `bin/**`, `LICENSE*`, `THIRD_PARTY_LICENSES*`, ...), so it
 # must be added explicitly -- this is what `telemetry-controller` searches
-# for alongside its own binary at runtime (see rust/telemetry-controller/
-# src/compose.rs and native.rs).
+# for alongside its own binary at runtime (see
+# rust/telemetry-controller/src/compose.rs).
 include:
   - "compose/**"
+
+# `bin/` is gitignored local build output. Controller binaries must come
+# only from the checksummed CI artifacts below; excluding the repository's
+# local `bin/**` prevents stale developer builds (or retained smoke-test
+# state under `bin/`) from colliding with or leaking into a publish.
+exclude:
+  - "bin/**"
 
 artifacts:
   # Controller binaries, one per supported platform. Each `source` is a
@@ -51,11 +54,4 @@ artifacts:
     include: ["**"]
   - source: ${ENVOY_STUDIO_ARTIFACTS}/telemetry/controller/macos-aarch64
     destination: bin/macos-aarch64
-    include: ["**"]
-
-  # Native Linux x86-64 service artifacts (Grafana, Tempo, OTel Collector
-  # Contrib), for the Docker-free native runtime. Never vendored into this
-  # repo; staged from each project's own upstream release archive.
-  - source: ${ENVOY_STUDIO_ARTIFACTS}/telemetry/native/linux-x86_64
-    destination: native
     include: ["**"]

@@ -26,11 +26,30 @@ Collector -> Tempo (persistent local storage) -> Grafana (this dashboard)
 
 ## Server setup
 
-Requires Docker + the Compose plugin on the server (the native, Docker-free
-path currently supports Linux x86-64 only -- see below).
+Requires Docker + the Compose plugin on the server.
+
+Download `telemetry-v<version>.zip` and `SHA256SUMS` from the matching
+[GitHub Release](https://github.com/gtvfx-envoy/telemetry/releases). Verify
+the archive before extracting it into the `gt`
+namespace beneath a directory already covered by `ENVOY_BNDL_ROOTS`:
+
+```bash
+sha256sum --check SHA256SUMS
+mkdir -p "$HOME/.local/share/envoy/bundles/gt"
+unzip telemetry-v0.1.0.zip -d "$HOME/.local/share/envoy/bundles/gt"
+export ENVOY_BNDL_ROOTS="$HOME/.local/share/envoy/bundles"
+envoy --list
+```
+
+The example produces
+`~/.local/share/envoy/bundles/gt/telemetry/v0.1.0/.bundle`; `envoy --list`
+should show the `telemetry` command before the server is started. Use the
+release version you actually downloaded, and persist `ENVOY_BNDL_ROOTS`
+through the server's normal environment configuration rather than relying on
+the temporary `export` above.
 
 ```text
-envoy telemetry start [--runtime auto|compose|native]
+envoy telemetry start [--runtime auto|compose]
 envoy telemetry stop
 envoy telemetry status
 envoy telemetry logs [collector|tempo|grafana|sweep]
@@ -41,13 +60,19 @@ envoy telemetry configure --retention-days=N
 - `start` is explicit and idempotent -- installing/updating this bundle
   never launches anything on its own, and running `start` again while
   already running is a no-op.
-- `auto` (the default) prefers Docker Compose when available, otherwise
-  falls back to native mode on Linux. Windows and macOS require Docker.
+- `auto` (the default) selects Docker Compose and reports an actionable error
+  when it is unavailable.
 - `stop` always preserves telemetry data (Tempo's storage volume is never
   removed).
-- Generated credentials, PID files, and state live under the platform
+- Generated credentials and state live under the platform
   Envoy config root (`~/.envoy/telemetry-server/`, honoring
   `ENVOY_CONFIG_ROOT`), never inside the published bundle itself.
+- Back up `state.json` with the server configuration. If it is missing while
+  persistent Grafana/Tempo volumes still exist, `start` fails closed rather
+  than generating credentials that cannot unlock the retained Grafana data.
+- `status` hides credentials by default. Use
+  `envoy telemetry status --show-credentials` from an operator-controlled
+  terminal when they must be recovered.
 
 ### Authentication
 
@@ -55,8 +80,8 @@ envoy telemetry configure --retention-days=N
   wired up for internal tools (most don't, and that's fine) --
   `telemetry-controller start` provisions a shared **`studio-viewer`**
   account with a generated password, printed once at `start` and
-  recoverable via `envoy telemetry status`. Give that one credential to
-  every artist; nobody needs their own account. A separate, random
+  recoverable via `envoy telemetry status --show-credentials`. Give that
+  credential to every artist; nobody needs their own account. A separate, random
   break-glass **admin** account is also generated for operator use only.
   SSO/LDAP remains a supported upgrade path -- configure it the normal
   Grafana way and it supersedes the shared-credential default.
@@ -68,19 +93,16 @@ envoy telemetry configure --retention-days=N
 
 ### Retention
 
-30 days by default. Tempo's own config file
-(`compose/tempo/tempo.yaml`'s `overrides.block_retention`) is
-the durable source of truth; `envoy telemetry configure
---retention-days=N` is a convenience wrapper that edits it (and prompts
-you to restart the server so Tempo picks up the change) rather than
-requiring you to hand-edit YAML.
+30 days by default. The controller copies the bundled Tempo template into
+`~/.envoy/telemetry-server/runtime/tempo.yaml`; that mutable runtime copy
+survives bundle upgrades. `envoy telemetry configure --retention-days=N`
+updates it and prompts you to restart the server so Tempo picks up the change.
 
 ### Runtimes
 
 | Runtime | Platforms | Notes |
 |---|---|---|
-| `compose` (recommended) | Windows, Linux, macOS | Requires Docker + the Compose plugin. |
-| `native` | Linux x86-64 only | No Docker; runs Grafana/Tempo/Collector/the sweep as plain background processes. For operators who'd rather not run Docker on the server. |
+| `compose` | Windows, Linux, macOS | Requires Docker + the Compose plugin. |
 
 ### Ingestion sweep
 
@@ -123,8 +145,8 @@ and the rest of a first small studio pilot rollout.
 - `compose/` -- Docker Compose definitions, Collector/Tempo config,
   Grafana provisioning, and the dashboard JSON.
 - `.envoy/` -- `commands.json`/`global_env.json` (registers `envoy
-  telemetry ...`) and `publish-manifest.yaml` (native/controller-binary
-  artifact staging for `engit publish bundle`).
+  telemetry ...`) and `publish-manifest.yaml` (controller-binary artifact
+  staging for `engit publish bundle`).
 - `VERSIONS.lock`, `THIRD_PARTY_LICENSES/` -- pinned versions and license
   inventory for every bundled third-party service.
 

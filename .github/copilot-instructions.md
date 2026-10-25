@@ -33,8 +33,8 @@ functions here rather than introducing `thiserror`/`anyhow`.
 ### Validation gate
 ```powershell
 cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
 ```
 All three must be clean before considering a change complete (mirrors
 `.github/workflows/lint.yml`).
@@ -49,7 +49,7 @@ vs. multi-line `bash -lc "..."`) and why `cargo`/`rustc` need an absolute path (
 `/home/USER/.cargo/bin/cargo`) rather than relying on `bash -c`'s non-login-shell PATH.
 
 **Build the Linux `telemetry-controller` release binary inside a container matching
-the sweep image's own base (`rust:1-bookworm` for `debian:bookworm-slim`), not on the
+the sweep image's own base (`rust:1.97.0-bookworm` for `debian:bookworm-slim`), not on the
 bare WSL2/CI host.** A binary built on a newer host glibc (e.g. Ubuntu 24.04+, glibc
 2.39) fails inside `debian:bookworm-slim` (glibc 2.36) with
 `` version `GLIBC_2.39' not found ``. This affects the real CI pipeline too (its Linux

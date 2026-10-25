@@ -1,12 +1,9 @@
 //! Tempo retention configuration.
 //!
-//! Tempo's own config file remains the durable source of truth for the
-//! active retention period; `telemetry-controller configure
-//! --retention-days=N` is a thin convenience wrapper that edits this one
-//! field (and, when the server is running, reloads Tempo) rather than
-//! requiring an operator to hand-edit YAML. The config file survives a
-//! controller reinstall since it lives in the published bundle, not under
-//! the config root.
+//! Tempo's mutable runtime config lives under the controller state directory,
+//! outside the replaceable published bundle. On first start it is copied from
+//! the bundle template; later starts preserve the runtime copy and reassert
+//! the retention value recorded in controller state.
 //!
 //! Retention lives at `overrides.block_retention` (flat, no `defaults:`
 //! wrapper, requiring `overrides.enable_legacy_overrides: true`
@@ -29,6 +26,55 @@ use serde_yaml::{Mapping, Value};
 
 const RETENTION_PATH: &[&str] = &["overrides", "block_retention"];
 const ENABLE_LEGACY_OVERRIDES_PATH: &[&str] = &["overrides", "enable_legacy_overrides"];
+
+/// Create or update the mutable Tempo runtime configuration.
+///
+/// The bundle template is copied only when the runtime file does not yet
+/// exist. This preserves operator configuration across bundle upgrades while
+/// keeping the controller's recorded retention value authoritative.
+pub fn prepare_runtime_config(
+    template_path: &Path,
+    runtime_path: &Path,
+    retention_days: u32,
+) -> Result<(), String> {
+    if !runtime_path.is_file() {
+        let parent = runtime_path.parent().ok_or_else(|| {
+            format!(
+                "runtime Tempo config has no parent directory: {}",
+                runtime_path.display()
+            )
+        })?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+        fs::copy(template_path, runtime_path).map_err(|error| {
+            format!(
+                "failed to copy Tempo config template {} to {}: {error}",
+                template_path.display(),
+                runtime_path.display()
+            )
+        })?;
+    }
+    set_retention_days(runtime_path, retention_days)?;
+    set_container_readable_permissions(runtime_path)
+}
+
+#[cfg(unix)]
+fn set_container_readable_permissions(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("Tempo config has no parent directory: {}", path.display()))?;
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o755))
+        .map_err(|error| format!("failed to set permissions on {}: {error}", parent.display()))?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o644))
+        .map_err(|error| format!("failed to set permissions on {}: {error}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn set_container_readable_permissions(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
 
 /// Set the retention period, in days, in the Tempo config file at
 /// `tempo_config_path`. Stored as Tempo's own Go-duration-string format
@@ -139,6 +185,59 @@ mod tests {
         set_retention_days(&config_path, 14).expect("should update retention");
 
         assert_eq!(get_retention_days(&config_path), Some(14));
+    }
+
+    #[test]
+    fn prepare_runtime_config_copies_template_once_and_preserves_runtime_changes() {
+        let temp_dir = tempdir().expect("tempdir should be created");
+        let template_path = temp_dir.path().join("template.yaml");
+        let runtime_path = temp_dir.path().join("state").join("tempo.yaml");
+        write_base_config(&template_path);
+
+        prepare_runtime_config(&template_path, &runtime_path, 14)
+            .expect("runtime config should be prepared");
+        let mut runtime_text =
+            fs::read_to_string(&runtime_path).expect("runtime config should be readable");
+        runtime_text.push_str("custom_runtime_field: preserved\n");
+        fs::write(&runtime_path, runtime_text).expect("runtime config should be editable");
+
+        fs::write(&template_path, "template_replacement: true\n")
+            .expect("template should be replaceable");
+        prepare_runtime_config(&template_path, &runtime_path, 45)
+            .expect("existing runtime config should be updated");
+
+        let updated =
+            fs::read_to_string(&runtime_path).expect("runtime config should remain readable");
+        assert!(updated.contains("custom_runtime_field: preserved"));
+        assert!(!updated.contains("template_replacement"));
+        assert_eq!(get_retention_days(&runtime_path), Some(45));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_runtime_config_is_readable_by_the_tempo_container_user() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempdir().expect("tempdir should be created");
+        let template_path = temp_dir.path().join("template.yaml");
+        let runtime_path = temp_dir.path().join("runtime").join("tempo.yaml");
+        write_base_config(&template_path);
+
+        prepare_runtime_config(&template_path, &runtime_path, 30)
+            .expect("runtime config should be prepared");
+
+        let directory_mode = fs::metadata(runtime_path.parent().unwrap())
+            .expect("runtime directory metadata should be available")
+            .permissions()
+            .mode()
+            & 0o777;
+        let file_mode = fs::metadata(&runtime_path)
+            .expect("runtime file metadata should be available")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(directory_mode, 0o755);
+        assert_eq!(file_mode, 0o644);
     }
 
     #[test]
