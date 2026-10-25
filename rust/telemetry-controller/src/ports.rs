@@ -1,7 +1,7 @@
 //! Port-occupancy pre-flight checks.
 //!
-//! Checked before `start` invokes Docker Compose (or launches native
-//! processes) so an operator gets an actionable "port already in use"
+//! Checked before `start` invokes Docker Compose so an operator gets an
+//! actionable "port already in use"
 //! error up front, rather than a more cryptic failure surfaced later by
 //! Docker or the underlying service itself.
 

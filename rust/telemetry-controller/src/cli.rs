@@ -24,17 +24,19 @@ pub struct Cli {
 pub enum Commands {
     /// Start Collector/Tempo/Grafana/the ingestion sweep. Idempotent.
     Start {
-        /// Which runtime to use: `auto` (default), `compose`, or `native`
-        /// (Linux x86-64 only).
+        /// Which runtime to use: `auto` (default) or `compose`.
         #[arg(long, default_value = "auto")]
         runtime: String,
     },
     /// Stop the shared infrastructure. Always preserves telemetry data.
     Stop,
-    /// Report whether the server is running, its runtime, retention, and
-    /// sanitized configuration (no headers/credentials beyond the
-    /// generated Grafana viewer password).
-    Status,
+    /// Report whether the server is running, its retention, and sanitized
+    /// configuration.
+    Status {
+        /// Display generated Grafana and Collector credentials.
+        #[arg(long)]
+        show_credentials: bool,
+    },
     /// Show logs for one service, or all services if omitted.
     Logs {
         #[arg(value_parser = ["collector", "tempo", "grafana", "sweep"])]
@@ -90,7 +92,7 @@ pub fn run(argv: &[String]) -> i32 {
     match cli.command {
         Commands::Start { runtime } => crate::commands::start(&runtime),
         Commands::Stop => crate::commands::stop(),
-        Commands::Status => crate::commands::status(),
+        Commands::Status { show_credentials } => crate::commands::status(show_credentials),
         Commands::Logs { service } => crate::commands::logs(service.as_deref()),
         Commands::Open => crate::commands::open(),
         Commands::Configure { retention_days } => crate::commands::configure(retention_days),
