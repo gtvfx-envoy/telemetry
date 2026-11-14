@@ -36,7 +36,7 @@ jobs:
         run: |
           python3 -c "import yaml, sys; yaml.safe_load(open('compose/otel-collector-config.yaml'))"
           python3 -c "import yaml, sys; yaml.safe_load(open('compose/tempo/tempo.yaml'))"
-          python3 -c "import yaml, sys; yaml.safe_load(open('compose/grafana/provisioning/datasources/tempo.yaml'))"
+          python3 -c "import yaml; config=yaml.safe_load(open('compose/grafana/provisioning/datasources/tempo.yaml')); assert config['datasources'][0]['uid'] == 'tempo'"
           python3 -c "import yaml, sys; yaml.safe_load(open('compose/grafana/provisioning/dashboards/dashboards.yaml'))"
 
       - name: Validate dashboard JSON is well-formed

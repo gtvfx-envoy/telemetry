@@ -26,6 +26,8 @@ use serde_yaml::{Mapping, Value};
 
 const RETENTION_PATH: &[&str] = &["overrides", "block_retention"];
 const ENABLE_LEGACY_OVERRIDES_PATH: &[&str] = &["overrides", "enable_legacy_overrides"];
+const SEARCH_MAX_DURATION_PATH: &[&str] = &["query_frontend", "search", "max_duration"];
+const METRICS_MAX_DURATION_PATH: &[&str] = &["query_frontend", "metrics", "max_duration"];
 
 /// Create or update the mutable Tempo runtime configuration.
 ///
@@ -100,6 +102,19 @@ pub fn set_retention_days(tempo_config_path: &Path, days: u32) -> Result<(), Str
     // it here, not just when the `overrides` map is created fresh, so a
     // config that's merely missing this one field also gets repaired.
     set_nested(&mut root, ENABLE_LEGACY_OVERRIDES_PATH, Value::Bool(true))?;
+    // Retention is the authoritative bound on stored trace data. Disable the
+    // independent query-window limits so a wider Grafana time picker returns
+    // the retained subset instead of failing (Tempo defaults metrics to 24h).
+    set_nested(
+        &mut root,
+        SEARCH_MAX_DURATION_PATH,
+        Value::String("0s".to_string()),
+    )?;
+    set_nested(
+        &mut root,
+        METRICS_MAX_DURATION_PATH,
+        Value::String("0s".to_string()),
+    )?;
 
     let updated = serde_yaml::to_string(&root)
         .map_err(|error| format!("failed to serialize updated Tempo config: {error}"))?;
@@ -292,6 +307,27 @@ mod tests {
         assert_eq!(
             get_nested(&root, ENABLE_LEGACY_OVERRIDES_PATH),
             Some(&Value::Bool(true))
+        );
+    }
+
+    #[test]
+    fn set_retention_days_disables_query_window_limits() {
+        let temp_dir = tempdir().expect("tempdir should be created");
+        let config_path = temp_dir.path().join("tempo.yaml");
+        write_base_config(&config_path);
+
+        set_retention_days(&config_path, 45).expect("should update retention");
+
+        let updated = fs::read_to_string(&config_path).expect("file should be readable");
+        let root: Value = serde_yaml::from_str(&updated).expect("updated config should parse");
+        let unlimited = Value::String("0s".to_string());
+        assert_eq!(
+            get_nested(&root, SEARCH_MAX_DURATION_PATH),
+            Some(&unlimited)
+        );
+        assert_eq!(
+            get_nested(&root, METRICS_MAX_DURATION_PATH),
+            Some(&unlimited)
         );
     }
 

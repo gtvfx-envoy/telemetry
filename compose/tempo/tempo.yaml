@@ -28,6 +28,16 @@ distributor:
         http:
           endpoint: 0.0.0.0:4318
 
+query_frontend:
+  search:
+    # Retention already bounds the available data. Disabling this separate
+    # query-window limit lets Grafana ranges wider than the retention period
+    # return the retained subset instead of failing with HTTP 400.
+    max_duration: 0s
+  metrics:
+    # Tempo otherwise rejects TraceQL metrics queries wider than 24 hours.
+    max_duration: 0s
+
 storage:
   trace:
     backend: local
