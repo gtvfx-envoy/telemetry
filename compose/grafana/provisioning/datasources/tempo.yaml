@@ -6,6 +6,10 @@ apiVersion: 1
 # plan's requirement that Tempo stay private to the Collector/Grafana.
 datasources:
   - name: Tempo
+    # Dashboard panels reference this stable UID. If omitted, Grafana creates
+    # a random UID and every provisioned panel fails with "Data source not
+    # found" even though the Tempo backend itself is healthy.
+    uid: tempo
     type: tempo
     access: proxy
     url: http://tempo:3200

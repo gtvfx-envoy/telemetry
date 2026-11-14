@@ -76,6 +76,7 @@
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [
         {
+          "refId": "A",
           "queryType": "traceql",
           "metricsQueryType": "instant",
           "query": "{ name = \"envoy.command.run\" && (span.envoy.stack.name =~ \"$stack\" || (span.envoy.stack.name = nil && \"$stack\" = \".*\")) && (span.envoy.team =~ \"$team\" || (span.envoy.team = nil && \"$team\" = \".*\")) && (span.envoy.command.name =~ \"$command\" || span.envoy.command.kind =~ \"$command\") && (span.envoy.success = ${success:raw}) && (span.envoy.version =~ \"$envoy_version\" || (span.envoy.version = nil && \"$envoy_version\" = \".*\")) && (span.envoy.installation_id =~ \"$installation_id\" || (span.envoy.installation_id = nil && \"$installation_id\" = \".*\")) } | count_over_time()"
@@ -90,6 +91,7 @@
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [
         {
+          "refId": "A",
           "queryType": "traceql",
           "metricsQueryType": "range",
           "query": "{ name = \"envoy.command.run\" && (span.envoy.stack.name =~ \"$stack\" || (span.envoy.stack.name = nil && \"$stack\" = \".*\")) && (span.envoy.team =~ \"$team\" || (span.envoy.team = nil && \"$team\" = \".*\")) && (span.envoy.command.name =~ \"$command\" || span.envoy.command.kind =~ \"$command\") && (span.envoy.success = ${success:raw}) && (span.envoy.version =~ \"$envoy_version\" || (span.envoy.version = nil && \"$envoy_version\" = \".*\")) && (span.envoy.installation_id =~ \"$installation_id\" || (span.envoy.installation_id = nil && \"$installation_id\" = \".*\")) } | rate()"
@@ -104,6 +106,7 @@
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [
         {
+          "refId": "A",
           "queryType": "traceql",
           "metricsQueryType": "instant",
           "query": "{ name = \"envoy.command.run\" && (span.envoy.stack.name =~ \"$stack\" || (span.envoy.stack.name = nil && \"$stack\" = \".*\")) && (span.envoy.team =~ \"$team\" || (span.envoy.team = nil && \"$team\" = \".*\")) && (span.envoy.command.name =~ \"$command\" || span.envoy.command.kind =~ \"$command\") && (span.envoy.version =~ \"$envoy_version\" || (span.envoy.version = nil && \"$envoy_version\" = \".*\")) && (span.envoy.installation_id =~ \"$installation_id\" || (span.envoy.installation_id = nil && \"$installation_id\" = \".*\")) } | count_over_time() by (span.envoy.success)"
@@ -118,19 +121,19 @@
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [
         {
-          "refId": "p50",
+          "refId": "A",
           "queryType": "traceql",
           "metricsQueryType": "range",
           "query": "{ name = \"envoy.command.run\" && (span.envoy.command.name =~ \"$command\" || span.envoy.command.kind =~ \"$command\") && (span.envoy.success = ${success:raw}) } | quantile_over_time(span.envoy.duration_ms, .5) by (span.envoy.command.name, span.envoy.command.kind)"
         },
         {
-          "refId": "p95",
+          "refId": "B",
           "queryType": "traceql",
           "metricsQueryType": "range",
           "query": "{ name = \"envoy.command.run\" && (span.envoy.command.name =~ \"$command\" || span.envoy.command.kind =~ \"$command\") && (span.envoy.success = ${success:raw}) } | quantile_over_time(span.envoy.duration_ms, .95) by (span.envoy.command.name, span.envoy.command.kind)"
         },
         {
-          "refId": "p99",
+          "refId": "C",
           "queryType": "traceql",
           "metricsQueryType": "range",
           "query": "{ name = \"envoy.command.run\" && (span.envoy.command.name =~ \"$command\" || span.envoy.command.kind =~ \"$command\") && (span.envoy.success = ${success:raw}) } | quantile_over_time(span.envoy.duration_ms, .99) by (span.envoy.command.name, span.envoy.command.kind)"
@@ -145,13 +148,13 @@
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [
         {
-          "refId": "runs",
+          "refId": "A",
           "queryType": "traceql",
           "metricsQueryType": "instant",
           "query": "{ name = \"envoy.command.run\" && (span.envoy.command.name =~ \"$command\" || span.envoy.command.kind =~ \"$command\") } | count_over_time() by (span.envoy.command.name, span.envoy.command.kind)"
         },
         {
-          "refId": "failures",
+          "refId": "B",
           "queryType": "traceql",
           "metricsQueryType": "instant",
           "query": "{ name = \"envoy.command.run\" && span.envoy.success = false && (span.envoy.command.name =~ \"$command\" || span.envoy.command.kind =~ \"$command\") } | count_over_time() by (span.envoy.command.name, span.envoy.command.kind)"
@@ -166,13 +169,13 @@
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [
         {
-          "refId": "runs",
+          "refId": "A",
           "queryType": "traceql",
           "metricsQueryType": "instant",
           "query": "{ name = \"envoy.command.run\" && (span.envoy.stack.name =~ \"$stack\" || (span.envoy.stack.name = nil && \"$stack\" = \".*\")) } | count_over_time() by (span.envoy.stack.name)"
         },
         {
-          "refId": "failures",
+          "refId": "B",
           "queryType": "traceql",
           "metricsQueryType": "instant",
           "query": "{ name = \"envoy.command.run\" && span.envoy.success = false && (span.envoy.stack.name =~ \"$stack\" || (span.envoy.stack.name = nil && \"$stack\" = \".*\")) } | count_over_time() by (span.envoy.stack.name)"
@@ -188,6 +191,7 @@
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [
         {
+          "refId": "A",
           "queryType": "traceql",
           "limit": 50,
           "query": "{ name = \"envoy.command.run\" && (span.envoy.command.name =~ \"$command\" || span.envoy.command.kind =~ \"$command\") && (span.envoy.success = ${success:raw}) } | select(span.envoy.command.name, span.envoy.command.kind, span.envoy.duration_ms, span.envoy.stack.name)"
@@ -202,6 +206,7 @@
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [
         {
+          "refId": "A",
           "queryType": "traceql",
           "metricsQueryType": "instant",
           "query": "{ name = \"envoy.command.run\" && (span.envoy.version =~ \"$envoy_version\" || (span.envoy.version = nil && \"$envoy_version\" = \".*\")) } | count_over_time() by (span.envoy.version)"
@@ -217,13 +222,13 @@
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [
         {
-          "refId": "retried",
+          "refId": "A",
           "queryType": "traceql",
           "metricsQueryType": "range",
           "query": "{ name = \"envoy.command.run\" && span.envoy.telemetry.delivered_via_retry = true } | rate()"
         },
         {
-          "refId": "total",
+          "refId": "B",
           "queryType": "traceql",
           "metricsQueryType": "range",
           "query": "{ name = \"envoy.command.run\" } | rate()"
@@ -239,6 +244,7 @@
       "datasource": { "type": "tempo", "uid": "tempo" },
       "targets": [
         {
+          "refId": "A",
           "queryType": "traceql",
           "limit": 200,
           "query": "{ name = \"envoy.command.run\" && (span.envoy.stack.name =~ \"$stack\" || (span.envoy.stack.name = nil && \"$stack\" = \".*\")) && (span.envoy.team =~ \"$team\" || (span.envoy.team = nil && \"$team\" = \".*\")) && (span.envoy.command.name =~ \"$command\" || span.envoy.command.kind =~ \"$command\") && (span.envoy.success = ${success:raw}) && (span.envoy.version =~ \"$envoy_version\" || (span.envoy.version = nil && \"$envoy_version\" = \".*\")) && (span.envoy.installation_id =~ \"$installation_id\" || (span.envoy.installation_id = nil && \"$installation_id\" = \".*\")) && (span.envoy.cli.argv_display =~ \"$arg_text\" || (span.envoy.cli.argv_display = nil && \"$arg_text\" = \".*\")) } | select(span.envoy.command.name, span.envoy.command.kind, span.envoy.cli.argv_display, span.envoy.stack.name, span.envoy.duration_ms, span.envoy.success, span.envoy.exit_code)"
